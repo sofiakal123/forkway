@@ -1,0 +1,737 @@
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #0f766e;
+  --accent-soft: #ccfbf1;
+  --choice: #7c3aed;
+  --choice-soft: #ede9fe;
+  --danger: #dc2626;
+  --warn-bg: #fef3c7;
+  --warn-text: #92400e;
+  --radius: 14px;
+  --appbar: 56px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --surface: #131c2e;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #24314a;
+    --accent: #2dd4bf;
+    --accent-soft: #134e4a;
+    --choice: #a78bfa;
+    --choice-soft: #2e1f5e;
+    --warn-bg: #422006;
+    --warn-text: #fcd34d;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* --- App bar ------------------------------------------------------------- */
+
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  height: var(--appbar);
+  padding: 0 12px env(0px) 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent);
+  color: white;
+}
+
+.appbar h1 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.icon-button {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.icon-button svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-button:active {
+  background: rgba(127, 127, 127, 0.2);
+}
+
+/* --- Alert banner --------------------------------------------------------- */
+
+.alert {
+  position: fixed;
+  top: calc(var(--appbar) + 8px);
+  left: 12px;
+  right: 12px;
+  z-index: 1100;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--choice);
+  color: white;
+  font-weight: 700;
+  font-size: 1.05rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+/* --- Plan view ------------------------------------------------------------ */
+
+.view {
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+#plan-view {
+  padding: 12px 16px 32px;
+}
+
+.planner {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  background: var(--surface);
+  padding: 12px;
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.place-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.place-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  padding: 13px 0;
+  outline: none;
+}
+
+.place-field:focus-within {
+  border-color: var(--accent);
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.dot.start {
+  background: #16a34a;
+}
+
+.dot.end {
+  background: var(--danger);
+}
+
+.suggestions {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.suggestions li {
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.suggestions li:active,
+.suggestions li.active {
+  background: var(--accent-soft);
+}
+
+.suggestions .group {
+  padding: 6px 14px 2px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  cursor: default;
+}
+
+.suggestion-name {
+  font-weight: 600;
+}
+
+.suggestion-detail {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.when {
+  display: flex;
+  gap: 8px;
+}
+
+.when select,
+.when input {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.when input {
+  flex: 1;
+  min-width: 0;
+}
+
+button.primary {
+  border: none;
+  border-radius: 12px;
+  padding: 14px 18px;
+  background: var(--accent);
+  color: white;
+  font-weight: 700;
+}
+
+button.primary:disabled {
+  opacity: 0.6;
+}
+
+button.secondary {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.wide {
+  width: 100%;
+}
+
+.status {
+  margin: 14px 4px 0;
+  color: var(--muted);
+  min-height: 1.2em;
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+/* --- Trip option cards ------------------------------------------------------ */
+
+.results {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.trip-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.trip-card:active {
+  border-color: var(--accent);
+}
+
+.trip-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.trip-legs {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.trip-time {
+  text-align: right;
+  flex: none;
+}
+
+.trip-minutes {
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+
+.trip-minutes small {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.trip-arrive,
+.trip-sub {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.fork-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--choice-soft);
+  font-size: 0.85rem;
+}
+
+.fork-summary strong {
+  color: var(--choice);
+}
+
+/* Line badges: subway lines are circles, buses are rounded rectangles */
+.route {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.route.subway {
+  width: 26px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.route.small {
+  min-width: 20px;
+  height: 20px;
+  font-size: 0.7rem;
+}
+
+.route.subway.small {
+  width: 20px;
+}
+
+.sep {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.walk-icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  color: var(--muted);
+}
+
+/* --- Recents ------------------------------------------------------------------ */
+
+.recents {
+  margin-top: 20px;
+}
+
+.recents h2 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 4px 6px;
+}
+
+.recents ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.recents li button {
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+}
+
+.recents li:last-child button {
+  border-bottom: none;
+}
+
+.footnote {
+  margin: 24px 4px 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* --- Trip view (map + sheet) ------------------------------------------------- */
+
+.trip-view {
+  max-width: none;
+  height: calc(100dvh - var(--appbar));
+  display: grid;
+  grid-template-rows: 40% 60%;
+}
+
+.map {
+  min-height: 0;
+  z-index: 0;
+}
+
+.sheet {
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface);
+  border-radius: 18px 18px 0 0;
+  margin-top: -16px;
+  position: relative;
+  z-index: 500;
+  padding: 8px 16px calc(24px + env(safe-area-inset-bottom));
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.12);
+}
+
+.sheet-handle {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin: 0 auto 12px;
+}
+
+.sheet-content,
+#sheet-content {
+  display: grid;
+  gap: 14px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.summary-minutes {
+  font-size: 1.6rem;
+  font-weight: 800;
+}
+
+.summary-times {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.section-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Exit choices: the heart of the app */
+.choices {
+  display: grid;
+  gap: 8px;
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 11px 12px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.choice.selected {
+  border-color: var(--choice);
+  background: var(--choice-soft);
+}
+
+.choice-radio {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  display: grid;
+  place-items: center;
+}
+
+.choice.selected .choice-radio {
+  border-color: var(--choice);
+}
+
+.choice.selected .choice-radio::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--choice);
+}
+
+.choice-stop {
+  font-weight: 700;
+}
+
+.choice-then {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 3px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.choice-time {
+  text-align: right;
+  font-weight: 700;
+}
+
+.choice-time small {
+  display: block;
+  font-weight: 600;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Step-by-step legs */
+.legs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.leg {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 10px;
+  padding-bottom: 14px;
+  position: relative;
+}
+
+.leg::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 30px;
+  bottom: 2px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--leg-color, var(--border));
+}
+
+.leg.walk::before {
+  background: repeating-linear-gradient(var(--muted) 0 4px, transparent 4px 9px);
+  width: 3px;
+}
+
+.leg:last-child::before {
+  display: none;
+}
+
+.leg-icon {
+  display: grid;
+  place-items: center;
+  height: 30px;
+}
+
+.leg-main {
+  font-weight: 650;
+}
+
+.leg-detail {
+  font-size: 0.86rem;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+.leg.done {
+  opacity: 0.45;
+}
+
+.leg.current .leg-main {
+  color: var(--accent);
+}
+
+/* --- Live trip ------------------------------------------------------------- */
+
+.now-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+}
+
+.now-card.getoff {
+  background: var(--choice);
+  color: white;
+}
+
+.now-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.now-detail {
+  font-size: 0.92rem;
+}
+
+.now-note {
+  font-size: 0.8rem;
+  opacity: 0.8;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.button-row > button {
+  flex: 1;
+}
+
+.stop-picker {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.stop-picker button {
+  width: 100%;
+  text-align: left;
+  padding: 11px 14px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: none;
+}
+
+.stop-picker .exit-mark {
+  float: right;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--choice);
+}
+
+.warn {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 0.85rem;
+}

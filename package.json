@@ -1,0 +1,11 @@
+{
+  "name": "forkway",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "data": "node tools/build-data.mjs --refresh",
+    "icons": "node tools/make-icons.mjs",
+    "test": "node tools/test-router.mjs",
+    "start": "npx serve ."
+  }
+}
