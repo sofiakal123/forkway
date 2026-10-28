@@ -81,7 +81,7 @@ The MTA updates its schedules a few times a year. To refresh:
 node tools/build-data.mjs --refresh
 ```
 
-Then change `VERSION` in `sw.js` (for example to `forkway-v3`) so installed copies pick up the new data, and push to GitHub.
+Then change `VERSION` in `sw.js` (for example to `forkway-v4`) so installed copies pick up the new data, and push to GitHub.
 
 ## Tests
 

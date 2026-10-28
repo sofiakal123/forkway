@@ -102,9 +102,18 @@ async function boot() {
 }
 
 function registerServiceWorker() {
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js").catch((err) => console.warn("Offline mode unavailable:", err));
-  }
+  if (!("serviceWorker" in navigator)) return;
+  // When an update takes over, reload once so every file is from the new
+  // version (but never in the middle of a trip)
+  const updating = Boolean(navigator.serviceWorker.controller);
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (updating && !reloaded && !state.tracker) {
+      reloaded = true;
+      location.reload();
+    }
+  });
+  navigator.serviceWorker.register("sw.js").catch((err) => console.warn("Offline mode unavailable:", err));
 }
 
 function locate() {
@@ -424,15 +433,23 @@ function openTrip(trip) {
   state.choice = Math.max(0, trip.choices.findIndex((c) => c.fastest));
   showView("trip");
   history.pushState({ view: "trip" }, "");
-  state.map ??= new TripMap(els.map, { offline: !state.live?.usable });
-  state.map.resize();
+  if (!state.map) {
+    try {
+      state.map = new TripMap(els.map, { offline: !state.live?.usable });
+    } catch (err) {
+      // No map (it didn't load, or the phone can't draw it): the trip still works
+      console.error("Map unavailable:", err);
+      els.tripView.classList.add("no-map");
+    }
+  }
+  state.map?.resize();
   renderPreview(true);
 }
 
 function renderPreview(fit = false) {
   const trip = state.trip;
   const choice = trip.choices[Math.min(state.choice, trip.choices.length - 1)];
-  state.map.show(state.net, choice, { exits: otherExits(trip.choices, choice), fit });
+  state.map?.show(state.net, choice, { exits: otherExits(trip.choices, choice), fit });
 
   const sheet = [];
   const summary = el("div", "summary");
@@ -580,7 +597,7 @@ function startLive() {
         state.here = fix;
         state.lastFixAt = Date.now();
         state.tracker?.locate(fix);
-        state.map.showYou(fix);
+        state.map?.showYou(fix);
         renderLive();
       },
       () => {},
@@ -630,7 +647,7 @@ function renderLive() {
     const exits = (st.choices ?? [])
       .filter((c) => c.exit.position !== st.chosenExit)
       .map((c) => ({ lat: net.lat[c.exit.stop], lon: net.lon[c.exit.stop], label: c.exit.then }));
-    state.map.show(net, remaining, { exits, fit: state.shownLeg !== tracker.legIndex });
+    state.map?.show(net, remaining, { exits, fit: state.shownLeg !== tracker.legIndex });
     state.shownLeg = tracker.legIndex;
   }
 

@@ -3,7 +3,8 @@
 // never cached: it's either fresh or not used.
 // Bump VERSION whenever app files or data change, so phones pick them up.
 
-const VERSION = "forkway-v2";
+const VERSION = "forkway-v3";
+const NETWORK_TIMEOUT_MS = 4000; // past this, answer from the saved copy
 const MAP_CACHE = "forkway-map"; // map tiles, fonts and the map's index
 const MAX_CLOSE_TILES = 800; // street-level tiles kept from browsing (saved NYC map tiles are never dropped)
 const SAVED_MAP_ZOOM = 13; // the "Save NYC map" download covers zooms up to this
@@ -29,17 +30,29 @@ const APP_FILES = [
   "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js",
 ];
 
+// "reload" skips the browser's HTTP cache, so a new version never saves a
+// mix of old and new files
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(APP_FILES)));
+  event.waitUntil(
+    caches.open(VERSION).then((cache) => cache.addAll(APP_FILES.map((url) => new Request(url, { cache: "reload" }))))
+  );
   self.skipWaiting();
 });
 
+// Pages from these versions can't reload themselves after an update, and may
+// be running a mix of old and new files, so reload them from here
+const LEGACY_VERSIONS = ["forkway-v1", "forkway-v2"];
+
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== MAP_CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
+    (async () => {
+      const old = (await caches.keys()).filter((k) => k !== VERSION && k !== MAP_CACHE);
+      await Promise.all(old.map((k) => caches.delete(k)));
+      await self.clients.claim();
+      if (old.some((k) => LEGACY_VERSIONS.includes(k))) {
+        for (const client of await self.clients.matchAll({ type: "window" })) client.navigate(client.url).catch(() => {});
+      }
+    })()
   );
 });
 
@@ -51,22 +64,26 @@ self.addEventListener("fetch", (event) => {
   if (url.hostname === "tiles.openfreemap.org") {
     event.respondWith(url.pathname === "/planet" ? networkFirst(request) : mapFile(request, url));
   } else if (url.origin === self.location.origin || url.hostname === "cdnjs.cloudflare.com") {
-    event.respondWith(cachedThenRefresh(request));
+    event.respondWith(appFile(request));
   }
   // Everything else (live MTA data, place search) goes straight to the network
 });
 
-// Answer from the cache right away, and refresh the cache in the background
-async function cachedThenRefresh(request) {
+// App files: the latest from the network when there's signal, so every file
+// is from the same version; the saved copy when there isn't
+async function appFile(request) {
   const cache = await caches.open(VERSION);
-  const cached = await cache.match(request, { ignoreSearch: true });
-  const fresh = fetch(request)
-    .then((response) => {
-      if (response.ok) cache.put(request, response.clone());
-      return response;
-    })
-    .catch(() => null);
-  return cached ?? (await fresh) ?? new Response("Offline", { status: 503 });
+  try {
+    const response = await withTimeout(fetch(request, { cache: "no-cache" }), NETWORK_TIMEOUT_MS);
+    if (response.ok) await cache.put(request, response.clone());
+    return response;
+  } catch {
+    return (await cache.match(request, { ignoreSearch: true })) ?? new Response("Offline", { status: 503 });
+  }
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms))]);
 }
 
 // The map's index names this week's tile set; use the saved one when offline

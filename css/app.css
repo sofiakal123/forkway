@@ -700,6 +700,18 @@ button.text {
   grid-template-rows: 42% 58%;
 }
 
+.trip-view.no-map {
+  grid-template-rows: 1fr;
+}
+
+.trip-view.no-map .map {
+  display: none;
+}
+
+.trip-view.no-map .sheet {
+  margin-top: 0;
+}
+
 .map {
   min-height: 0;
   z-index: 0;
