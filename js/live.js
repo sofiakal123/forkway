@@ -1,21 +1,29 @@
 // Follows a trip as it happens: where you are, which exits are still ahead
-// (with fresh arrival times), and when to get off. Position comes from GPS
-// when there is a fix (elevated lines, buses), from the schedule when there
-// isn't (underground), and from the rider tapping "I'm here" at any time.
+// (with fresh arrival times), and when to get off. Position comes from the
+// MTA's live train predictions when there's signal (subway), GPS when there
+// is a fix (elevated lines, buses), the schedule when there's neither
+// (underground), and from the rider tapping "I'm here" at any time.
 import { distance } from "./network.js";
 import { exitChoicesWhileRiding, searchToDestination } from "./router.js";
+import { withLiveTimes } from "./realtime.js";
 
 const AT_STOP_METERS = 70; // close enough to count as at a stop
 const ON_ROUTE_METERS = 150; // close enough to a stop to place you on the line
 const LOOK_AHEAD_STOPS = 15; // how far ahead a GPS fix may move you
 const SEARCH_REFRESH_MS = 5 * 60_000; // re-plan the rest of the trip this often
 const MIN_ACCURACY_METERS = 120; // ignore fixes vaguer than this
+const BOARD_MATCH_MS = 4 * 60_000; // a live train this close to "I'm on board" is the one
 
 export class TripTracker {
-  constructor(net, trip, dest) {
+  // live: a LiveData, or null to use the schedule only
+  constructor(net, trip, dest, live = null) {
     this.net = net;
     this.dest = dest;
-    this.legs = trip.legs.slice();
+    this.live = live;
+    this.legs = trip.legs.map((leg) => ({ ...leg }));
+    this.train = null; // the live train we're on
+    this.expected = null; // the live train we're waiting for
+    this.liveAt = 0; // when live data last placed us
     this.legIndex = 0;
     this.anchor = null; // while riding: { position, time } we're sure of
     this.boarded = false;
@@ -40,6 +48,7 @@ export class TripTracker {
     if (leg?.kind !== "ride") return;
     this.boarded = true;
     this.anchor = { position: leg.from, time: now };
+    this.train = this.trainLeavingNear(now);
   }
 
   // "I'm at this stop" while riding
@@ -69,8 +78,82 @@ export class TripTracker {
   nextLeg() {
     this.legIndex++;
     this.boarded = false;
+    this.boardedByEstimate = false;
     this.anchor = null;
+    this.train = null;
+    this.expected = null;
     this.alerted.clear();
+  }
+
+  // --- Live trains -------------------------------------------------------------
+
+  liveRide() {
+    const leg = this.leg;
+    return Boolean(this.live?.usable && leg?.kind === "ride" && leg.route.mode === "subway");
+  }
+
+  // The live train leaving our stop closest to `time`, if any
+  trainLeavingNear(time) {
+    if (!this.liveRide()) return null;
+    const leg = this.leg;
+    if (this.expected && Math.abs(this.expected.depart - time) <= BOARD_MATCH_MS) return this.expected.id;
+    const trains = this.live.trains(leg.pattern, leg.from, leg.to) ?? [];
+    let best = null;
+    for (const t of trains) {
+      const gap = Math.abs(t.depart - time);
+      if (gap <= BOARD_MATCH_MS && (!best || gap < best.gap)) best = { id: t.id, gap };
+    }
+    return best?.id ?? null;
+  }
+
+  // Waiting: the real next trains. Riding: where our train actually is.
+  // Returns the upcoming trains while waiting, for the screen.
+  syncLive(now) {
+    if (!this.liveRide()) return null;
+    const leg = this.leg;
+
+    if (!this.boarded) {
+      const trains = this.live.trains(leg.pattern, leg.from, leg.to);
+      if (!trains) return null;
+      const upcoming = trains.filter((t) => t.depart >= now - 30_000);
+      const missed = this.expected && !upcoming.some((t) => t.id === this.expected.id);
+      if (missed && this.live.train(leg.route.id, this.expected.id)) {
+        // The train we were waiting for has left our stop: assume we're on it
+        this.boarded = true;
+        this.boardedByEstimate = true;
+        this.train = this.expected.id;
+        this.anchor = { position: leg.from, time: this.expected.depart };
+      } else {
+        this.expected = upcoming[0] ?? null;
+        if (this.expected) {
+          leg.board = this.expected.depart;
+          leg.arrive = this.expected.arrive;
+          leg.live = true;
+        }
+        return upcoming;
+      }
+    }
+
+    this.train ??= this.trainLeavingNear(this.anchor?.time ?? now);
+    const stops = this.train ? this.live.train(leg.route.id, this.train) : null;
+    if (!stops) return null;
+
+    // The feed lists only the stops this train hasn't reached yet
+    const pattern = this.net.patterns[leg.pattern];
+    const ahead = stops.find((x) => x.time > now - 15_000);
+    const k = ahead ? pattern.stops.indexOf(ahead.stop, leg.from) : -1;
+    if (k >= 0) {
+      const at = ahead.time <= now + 20_000; // pulling in about now
+      this.anchor = { position: Math.max(leg.from, at ? k : k - 1), time: now };
+      this.boardedByEstimate = false;
+      this.liveAt = now.getTime();
+    }
+    const exit = stops.find((x) => x.stop === leg.toStop.stop);
+    if (exit) {
+      leg.arrive = new Date(exit.time);
+      leg.live = true;
+    }
+    return null;
   }
 
   // --- GPS -------------------------------------------------------------------
@@ -138,8 +221,10 @@ export class TripTracker {
       };
     }
 
+    const upcoming = this.syncLive(now);
+
     // Before boarding, assume we got on once the vehicle should have come
-    if (!this.boarded && now > leg.board && now - leg.board > 2 * 60_000) {
+    if (!this.boarded && !upcoming?.length && now > leg.board && now - leg.board > 2 * 60_000) {
       this.boarded = true;
       this.anchor = { position: leg.from, time: leg.board };
       this.boardedByEstimate = true;
@@ -148,10 +233,18 @@ export class TripTracker {
     const pattern = this.net.patterns[leg.pattern];
     const position = this.boarded ? Math.min(this.estimatePosition(now), leg.to) : leg.from;
     const confirmed = Boolean(this.anchor) && !this.boardedByEstimate;
+    const liveNow = this.liveRide() && now.getTime() - this.liveAt < 90_000;
 
-    // Fresh exit choices from where we are
+    // Fresh exit choices from where we are (or from the stop, once the vehicle comes)
     this.refreshSearch(now);
-    const choices = exitChoicesWhileRiding(this.search, leg.pattern, position, now);
+    const from = this.boarded ? now : new Date(Math.max(now, leg.board));
+    let choices = exitChoicesWhileRiding(this.search, leg.pattern, position, from);
+    if (this.live?.usable) {
+      const onBoard = this.boarded ? this.train : null;
+      choices = choices.map((c) => ({ ...withLiveTimes(c, this.live, onBoard), exit: c.exit }));
+      const fastest = Math.min(...choices.map((c) => c.arrive.getTime()));
+      for (const c of choices) c.fastest = c.arrive.getTime() === fastest;
+    }
 
     let alert = null;
     const stopsLeft = leg.to - position;
@@ -169,12 +262,14 @@ export class TripTracker {
       pattern,
       position,
       confirmed,
+      source: liveNow ? "live" : confirmed ? "gps" : "schedule",
+      nextTrains: upcoming?.slice(0, 3).map((t) => Math.max(0, Math.round((t.depart - now) / 60000))) ?? null,
       nextStop: position + 1 < pattern.stops.length ? this.net.stopName[pattern.stops[position + 1]] : null,
       stopsLeft,
       choices,
       chosenExit: leg.to,
       waitMinutes: Math.max(0, Math.round((leg.board - now) / 60000)),
-      headwayMinutes: Math.round((leg.wait * 2) / 60),
+      headwayMinutes: leg.headway ?? Math.round((leg.wait * 2) / 60),
       alert,
     };
   }

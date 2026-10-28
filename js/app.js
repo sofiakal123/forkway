@@ -3,17 +3,25 @@ import { planTrips } from "./router.js";
 import { StopSearch, geocode } from "./search.js";
 import { TripMap } from "./map.js";
 import { TripTracker } from "./live.js";
+import { LiveData, liveResults, routesOf } from "./realtime.js";
+import { saveNycMap, savedMapDate } from "./offline-map.js";
 
 const RECENTS_KEY = "forkway-recents";
 const MAX_RECENTS = 6;
 const LIVE_TICK_MS = 5000;
+const DATA_TICK_MS = 15_000;
 const GEOCODE_DELAY_MS = 700; // Nominatim allows about one search a second
 const NO_GPS_AFTER_MS = 30_000;
+const LIVE_PLAN_WINDOW_MS = 20 * 60_000; // live times only help trips leaving about now
+const MAX_ALERTS_SHOWN = 3;
+const MAX_FORKS_ON_CARD = 3; // the trip screen lists them all
 
 const els = {
   title: document.getElementById("title"),
   back: document.getElementById("back"),
-  alert: document.getElementById("alert"),
+  dataPill: document.getElementById("data-pill"),
+  dataLabel: document.getElementById("data-label"),
+  toast: document.getElementById("alert"),
   planView: document.getElementById("plan-view"),
   tripView: document.getElementById("trip-view"),
   form: document.getElementById("plan-form"),
@@ -28,6 +36,7 @@ const els = {
   results: document.getElementById("results"),
   recents: document.getElementById("recents"),
   recentList: document.getElementById("recent-list"),
+  dataPanel: document.getElementById("data-panel"),
   footnote: document.getElementById("footnote"),
   map: document.getElementById("map"),
   sheet: document.getElementById("sheet-content"),
@@ -35,6 +44,9 @@ const els = {
 
 const state = {
   net: null,
+  live: null, // live MTA data (LiveData)
+  routeById: new Map(),
+  serviceWeek: null,
   stopSearch: null,
   map: null,
   here: null, // latest GPS fix
@@ -50,6 +62,7 @@ const state = {
   lastFixAt: 0,
   pickingStop: false,
   shownLeg: -1,
+  savingMap: null, // { done, total } while saving the offline map
 };
 
 // --- Start up ------------------------------------------------------------------
@@ -58,6 +71,7 @@ async function boot() {
   registerServiceWorker();
   wireEvents();
   renderRecents();
+  renderDataPill();
   locate();
 
   try {
@@ -66,9 +80,9 @@ async function boot() {
     const data = await res.json();
     state.net = new Network(data);
     state.stopSearch = new StopSearch(state.net);
-    els.footnote.textContent =
-      `Schedules from the MTA for the week of ${formatFeedDate(data.serviceDates?.wd?.gtfs_subway)}. ` +
-      "Times are estimated from the timetable, not live tracking. Map © OpenStreetMap contributors.";
+    state.live = new LiveData(state.net);
+    state.routeById = new Map(state.net.routes.map((r) => [r.id, r]));
+    state.serviceWeek = formatFeedDate(data.serviceDates?.wd?.gtfs_subway);
   } catch (err) {
     console.error(err);
     setStatus("Couldn't load NYC transit data. Check your connection and reopen the app.", true);
@@ -77,6 +91,14 @@ async function boot() {
   }
   els.planButton.disabled = false;
   els.planButton.textContent = "See routes";
+  els.footnote.textContent =
+    "Live data from the MTA. Map data © OpenStreetMap contributors, via OpenFreeMap. " +
+    "Live bus times aren't included: the MTA's bus feed needs a server.";
+  renderDataPanel();
+  renderDataPill();
+
+  state.live.refresh([]).then(renderData);
+  setInterval(dataTick, DATA_TICK_MS);
 }
 
 function registerServiceWorker() {
@@ -100,6 +122,144 @@ function locate() {
 
 function fixOf(pos) {
   return { lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy };
+}
+
+// --- Live or saved data ---------------------------------------------------------------
+
+const DATA_LABELS = {
+  live: "Live",
+  connecting: "Connecting",
+  offline: "Offline",
+  off: "Saved data",
+};
+
+function renderData() {
+  renderDataPill();
+  renderDataPanel();
+}
+
+function renderDataPill() {
+  const st = state.live?.state ?? "connecting";
+  els.dataPill.dataset.state = st;
+  els.dataLabel.textContent = DATA_LABELS[st];
+  els.dataPill.setAttribute(
+    "aria-label",
+    st === "off" ? "Using saved data only. Tap to use live data." : `${DATA_LABELS[st]}. Tap to use saved data only.`
+  );
+  state.map?.setOffline(!state.live?.usable);
+}
+
+function renderDataPanel() {
+  if (!state.live) return;
+  const live = state.live;
+  const st = live.state;
+
+  const liveRow = row(
+    "Live MTA data",
+    {
+      live: `Train times and alerts · ${live.updatedAt ? clock(live.updatedAt) : "now"}`,
+      connecting: "Connecting to the MTA…",
+      offline: "No signal: using saved schedules",
+      off: "Off: using saved schedules and map",
+    }[st]
+  );
+  const toggle = document.createElement("input");
+  toggle.type = "checkbox";
+  toggle.className = "switch";
+  toggle.checked = live.enabled;
+  toggle.setAttribute("aria-label", "Use live MTA data");
+  toggle.addEventListener("change", () => setLiveEnabled(toggle.checked));
+  liveRow.append(toggle);
+
+  const scheduleRow = row("Saved schedules", `Every line · ${state.serviceWeek} timetable`);
+  scheduleRow.append(el("span", "tag", "Saved"));
+
+  const saved = savedMapDate();
+  let mapDetail = saved ? `Saved ${saved.toLocaleDateString([], { month: "short", day: "numeric" })}` : "Not saved yet · about 10 MB";
+  if (state.savingMap) mapDetail = `Saving… ${Math.round((state.savingMap.done / state.savingMap.total) * 100)}%`;
+  const mapRow = row("Offline NYC map", mapDetail);
+  const save = button("small-button", saved ? "Update" : "Save", saveMap);
+  save.disabled = Boolean(state.savingMap) || !("caches" in window) || !navigator.onLine;
+  mapRow.append(save);
+
+  const rows = [liveRow, scheduleRow, mapRow];
+  if (state.savingMap) {
+    const bar = el("div", "progress");
+    const fill = el("span");
+    fill.style.width = `${(state.savingMap.done / state.savingMap.total) * 100}%`;
+    bar.append(fill);
+    mapRow.querySelector(".row-text").append(bar);
+  }
+  els.dataPanel.replaceChildren(...rows);
+}
+
+function row(title, detail) {
+  const r = el("div", "row");
+  const text = el("div", "row-text");
+  text.append(el("div", "row-title", title), el("div", "row-detail", detail));
+  r.append(text);
+  return r;
+}
+
+function setLiveEnabled(on) {
+  state.live.setEnabled(on);
+  showToast(on ? "Live data on" : "Using saved data only: schedules and the saved map");
+  renderData();
+  if (state.results) applyLive();
+  if (on) state.live.refresh(state.results ? routesOf(state.results.scheduled) : [], { force: true }).then(() => {
+    renderData();
+    if (state.results) applyLive();
+    if (state.tracker) renderLive();
+  });
+  if (state.trip && !state.tracker) renderPreview();
+  if (state.tracker) renderLive();
+}
+
+async function saveMap() {
+  if (state.savingMap) return;
+  state.savingMap = { done: 0, total: 1 };
+  renderDataPanel();
+  let lastRender = 0;
+  try {
+    await saveNycMap((done, total) => {
+      state.savingMap = { done, total };
+      if (Date.now() - lastRender > 250 || done === total) {
+        lastRender = Date.now();
+        renderDataPanel();
+      }
+    });
+    showToast("NYC map saved. It works with no signal now.");
+  } catch (err) {
+    showToast(`Couldn't save the map: ${err.message}`);
+  }
+  state.savingMap = null;
+  renderDataPanel();
+}
+
+// Every few seconds: keep the data status and live trip times current
+function dataTick() {
+  renderData();
+  const r = state.results;
+  if (r && state.live?.usable && !state.tracker && Math.abs(r.time - Date.now()) < LIVE_PLAN_WINDOW_MS) {
+    state.live.refresh(routesOf(r.scheduled)).then((changed) => changed && applyLive());
+  }
+}
+
+// Planner results with live train times (or back to the schedule)
+function applyLive() {
+  const r = state.results;
+  if (!r) return;
+  const useLive = state.live?.usable && Math.abs(r.time - Date.now()) < LIVE_PLAN_WINDOW_MS;
+  r.trips = useLive ? liveResults(r.scheduled, state.live) : r.scheduled;
+  renderResults();
+  if (state.trip && !state.tracker) {
+    // Keep the open trip in step with the new times
+    const updated = r.trips.find((t) => t.first?.pattern === state.trip.first?.pattern && t.walkOnly === state.trip.walkOnly);
+    if (updated) {
+      state.trip = updated;
+      renderPreview();
+    }
+  }
 }
 
 // --- Choosing places ---------------------------------------------------------------
@@ -127,7 +287,7 @@ function onPlaceInput(input, typed) {
   const stops = state.stopSearch.find(text, 6);
   renderSuggestions(input, stops, []);
 
-  if (text.length >= 4 && navigator.onLine) {
+  if (text.length >= 4 && navigator.onLine && state.live?.enabled) {
     geocodeTimer = setTimeout(async () => {
       geocodeAbort = new AbortController();
       try {
@@ -150,17 +310,11 @@ function renderSuggestions(input, stops, places) {
   for (const item of items) {
     const li = document.createElement("li");
     if (item.group) {
-      li.className = "group";
+      li.className = "group label";
       li.textContent = item.group;
     } else {
       li.setAttribute("role", "option");
-      const name = document.createElement("div");
-      name.className = "suggestion-name";
-      name.textContent = item.name;
-      const detail = document.createElement("div");
-      detail.className = "suggestion-detail";
-      detail.textContent = item.detail ?? "";
-      li.append(name, detail);
+      li.append(el("div", "suggestion-name", item.name), el("div", "suggestion-detail", item.detail ?? ""));
       // pointerdown, so it fires before the input loses focus
       li.addEventListener("pointerdown", (event) => {
         event.preventDefault();
@@ -205,56 +359,62 @@ function plan() {
   setStatus("Finding routes…");
   els.results.innerHTML = "";
   // Let the status show before the (brief) heavy lifting
-  setTimeout(() => {
+  setTimeout(async () => {
     const { trips } = planTrips(state.net, origin, state.to, time);
-    state.results = { trips, origin, dest: state.to, time };
+    state.results = { trips, scheduled: trips, origin, dest: state.to, time };
     saveRecent(state.to);
     renderResults();
     setStatus(trips.length ? "" : "No routes found. Try a nearby stop or a different time.", trips.length === 0);
+
+    // Schedule answers show at once; live train times follow when they arrive
+    if (trips.length && state.live.usable && Math.abs(time - Date.now()) < LIVE_PLAN_WINDOW_MS) {
+      await state.live.refresh(routesOf(trips));
+      if (state.results?.scheduled === trips) applyLive();
+      renderData();
+    }
   }, 30);
 }
 
 function renderResults() {
-  els.results.innerHTML = "";
-  for (const trip of state.results.trips) {
+  const cards = state.results.trips.map((trip) => {
     const best = trip.best;
-    const card = document.createElement("button");
+    const card = el("button", "trip-card");
     card.type = "button";
-    card.className = "trip-card";
 
-    const top = el("div", "trip-top");
-    const legs = el("div", "trip-legs");
-    legs.append(...legChips(best.legs));
-    const time = el("div", "trip-time");
-    time.innerHTML = `<div class="trip-minutes">${best.minutes} <small>min</small></div>`;
-    time.append(el("div", "trip-arrive", `Arrive ${clock(best.arrive)}`));
-    top.append(legs, time);
-    card.append(top);
+    const head = el("div", "trip-head");
+    head.append(minutesEl(best.minutes), el("div", "arrive", `Arrive ${clock(best.arrive)}`));
+    const chips = el("div", "chips");
+    chips.append(...legChips(best.legs));
+    card.append(head, chips);
 
     const firstRide = best.legs.find((l) => l.kind === "ride");
-    card.append(
-      el(
-        "div",
-        "trip-sub",
-        trip.walkOnly ? "Walk the whole way" : `Board at ${firstRide.fromStop.name} at about ${clock(firstRide.board)}`
-      )
-    );
+    const sub = el("div", "trip-sub", trip.walkOnly ? "Walk the whole way" : `${firstRide.fromStop.name} · ${clock(firstRide.board)}  `);
+    if (firstRide?.live) sub.append(el("span", "tag live", "live"));
+    card.append(sub);
+
+    const alerts = tripAlerts(trip.choices);
+    if (alerts.length) card.append(el("div", "alert-count", `${alerts.length} service alert${alerts.length === 1 ? "" : "s"}`));
 
     // The forks: every place you could switch off the first ride
     if (trip.choices.length > 1) {
-      const fork = el("div", "fork-summary");
-      const label = el("strong", null, `${trip.choices.length} places to switch`);
-      fork.append(label, el("span", "sep", "·"));
-      trip.choices.forEach((choice, i) => {
-        if (i) fork.append(el("span", "sep", "/"));
-        fork.append(el("span", null, choice.exit.name), ...continuationChips(choice, true));
-      });
-      card.append(fork);
+      const forks = el("div", "forks");
+      forks.append(el("div", "label", `${trip.choices.length} places to switch`));
+      const list = el("div", "fork-list");
+      for (const choice of trip.choices.slice(0, MAX_FORKS_ON_CARD)) {
+        const item = el("span", "fork-item");
+        item.append(choice.exit.name, ...continuationChips(choice, true));
+        list.append(item);
+      }
+      const more = trip.choices.length - MAX_FORKS_ON_CARD;
+      if (more > 0) list.append(el("span", "sep", `+${more} more`));
+      forks.append(list);
+      card.append(forks);
     }
 
     card.addEventListener("click", () => openTrip(trip));
-    els.results.append(card);
-  }
+    return card;
+  });
+  els.results.replaceChildren(...cards);
 }
 
 // --- A trip: preview -----------------------------------------------------------------
@@ -264,51 +424,57 @@ function openTrip(trip) {
   state.choice = Math.max(0, trip.choices.findIndex((c) => c.fastest));
   showView("trip");
   history.pushState({ view: "trip" }, "");
-  state.map ??= new TripMap(els.map);
+  state.map ??= new TripMap(els.map, { offline: !state.live?.usable });
   state.map.resize();
   renderPreview(true);
 }
 
 function renderPreview(fit = false) {
   const trip = state.trip;
-  const choice = trip.choices[state.choice];
+  const choice = trip.choices[Math.min(state.choice, trip.choices.length - 1)];
   state.map.show(state.net, choice, { exits: otherExits(trip.choices, choice), fit });
 
   const sheet = [];
   const summary = el("div", "summary");
-  summary.innerHTML = `<div class="summary-minutes">${choice.minutes} min</div>`;
-  summary.append(el("div", "summary-times", `${clock(choice.depart)} – ${clock(choice.arrive)}`));
+  summary.append(minutesEl(choice.minutes));
+  const times = el("div", "summary-times");
+  times.append(el("div", null, `${clock(choice.depart)} – ${clock(choice.arrive)}`), sourceTag(choice.live));
+  summary.append(times);
   sheet.push(summary);
 
   if (trip.choices.length > 1) {
     const ride = choice.legs.find((l) => l.kind === "ride");
-    sheet.push(choicesSection(ride, trip.choices, choice.exit.position, (picked) => {
-      state.choice = trip.choices.indexOf(picked);
-      renderPreview();
-    }));
+    sheet.push(
+      choicesSection(ride, trip.choices, choice.exit.position, (picked) => {
+        state.choice = trip.choices.indexOf(picked);
+        renderPreview();
+      })
+    );
   }
 
+  const alerts = alertsSection(tripAlerts([choice]));
+  if (alerts) sheet.push(alerts);
+
   sheet.push(legList(choice.legs, -1));
-  const start = el("button", "primary wide", "Start trip");
-  start.type = "button";
-  start.addEventListener("click", startLive);
-  sheet.push(start);
+  sheet.push(button("primary wide", "Start trip", startLive));
+  sheet.push(compareLinks(state.results.origin, state.results.dest));
   els.sheet.replaceChildren(...sheet);
 }
 
-// "Where to get off the 4": one selectable card per exit
+// "Get off the 4 at": one row per exit
 function choicesSection(ride, choices, chosenPosition, onPick) {
-  const wrap = el("div", "choices");
-  const title = el("div", "section-title");
-  title.append("Where to get off the", routeBadge(ride.route, true));
-  wrap.append(title);
+  const section = el("div", "section");
+  const title = el("div", "label");
+  title.append("Get off the", routeBadge(ride.route, true), "at");
+  section.append(title);
 
+  const list = el("div", "choices");
   const fastest = Math.min(...choices.map((c) => c.arrive.getTime()));
   for (const choice of choices) {
-    const card = el("button", "choice");
-    card.type = "button";
-    if (choice.exit.position === chosenPosition) card.classList.add("selected");
-    card.setAttribute("aria-pressed", String(choice.exit.position === chosenPosition));
+    const selected = choice.exit.position === chosenPosition;
+    const item = el("button", `choice${selected ? " selected" : ""}`);
+    item.type = "button";
+    item.setAttribute("aria-pressed", String(selected));
 
     const middle = el("div");
     middle.append(el("div", "choice-stop", choice.exit.name));
@@ -318,14 +484,14 @@ function choicesSection(ride, choices, chosenPosition, onPick) {
 
     const time = el("div", "choice-time", clock(choice.arrive));
     const later = Math.round((choice.arrive.getTime() - fastest) / 60000);
-    if (later <= 0) time.append(el("small", null, "fastest"));
-    else time.append(el("small", null, `+${later} min`));
+    time.append(later <= 0 ? el("small", "best", "fastest") : el("small", null, `+${later} min`));
 
-    card.append(el("span", "choice-radio"), middle, time);
-    card.addEventListener("click", () => onPick(choice));
-    wrap.append(card);
+    item.append(el("span", "choice-radio"), middle, time);
+    item.addEventListener("click", () => onPick(choice));
+    list.append(item);
   }
-  return wrap;
+  section.append(list);
+  return section;
 }
 
 function otherExits(choices, selected) {
@@ -333,15 +499,75 @@ function otherExits(choices, selected) {
     .filter((c) => c !== selected)
     .map((c) => {
       const s = c.exit.stop;
-      return { lat: state.net.lat[s], lon: state.net.lon[s], label: `${c.exit.name} → ${c.exit.then}` };
+      return { lat: state.net.lat[s], lon: state.net.lon[s], label: c.exit.then };
     });
+}
+
+// The same trip in Google Maps or Citymapper (opens their app if installed)
+function compareLinks(origin, dest) {
+  const wrap = el("div", "compare");
+  const from = `${origin.lat.toFixed(5)},${origin.lon.toFixed(5)}`;
+  const to = `${dest.lat.toFixed(5)},${dest.lon.toFixed(5)}`;
+  const links = [
+    ["Google Maps", `https://www.google.com/maps/dir/?api=1&origin=${from}&destination=${to}&travelmode=transit`],
+    ["Citymapper", `https://citymapper.com/directions?startcoord=${from}&endcoord=${to}&endname=${encodeURIComponent(dest.name)}`],
+  ];
+  wrap.append("Compare in");
+  for (const [name, href] of links) {
+    const a = el("a", null, name);
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    wrap.append(a);
+  }
+  return wrap;
+}
+
+// --- Service alerts -----------------------------------------------------------------------
+
+function tripAlerts(choices) {
+  if (!state.live?.usable) return [];
+  const ids = new Set();
+  for (const c of choices) for (const leg of c.legs) if (leg.kind === "ride") ids.add(leg.route.id);
+  return state.live.alertsFor([...ids]);
+}
+
+function alertsSection(alerts) {
+  if (!alerts.length) return null;
+  const section = el("div", "alerts");
+  for (const alert of alerts.slice(0, MAX_ALERTS_SHOWN)) {
+    const item = el("details", "alert-item");
+    const summary = el("summary");
+    const title = el("div", "alert-title");
+    title.append(...withBadges(alert.title));
+    if (alert.type) title.append(el("span", "alert-type label", alert.type));
+    summary.append(title);
+    item.append(summary);
+    if (alert.text) {
+      const text = el("div", "alert-text");
+      text.append(...withBadges(alert.text));
+      item.append(text);
+    }
+    section.append(item);
+  }
+  if (alerts.length > MAX_ALERTS_SHOWN) section.append(el("div", "fine", `${alerts.length - MAX_ALERTS_SHOWN} more alerts on these lines`));
+  return section;
+}
+
+// The MTA writes lines as "[4]": show those as line badges
+function withBadges(text) {
+  return text.split(/\[([A-Za-z0-9]+)\]/).map((part, k) => {
+    const route = k % 2 ? state.routeById.get(part.toUpperCase()) : null;
+    if (k % 2 === 0) return part;
+    return route ? routeBadge(route, true) : `[${part}]`;
+  });
 }
 
 // --- A trip: live -----------------------------------------------------------------------
 
 function startLive() {
   const choice = state.trip.choices[state.choice];
-  state.tracker = new TripTracker(state.net, choice, state.results.dest);
+  state.tracker = new TripTracker(state.net, choice, state.results.dest, state.live);
   state.pickingStop = false;
   state.shownLeg = -1;
   state.lastFixAt = 0;
@@ -361,8 +587,22 @@ function startLive() {
       { enableHighAccuracy: true, maximumAge: 5000 }
     );
   }
-  state.liveTimer = setInterval(renderLive, LIVE_TICK_MS);
+  state.liveTimer = setInterval(liveTick, LIVE_TICK_MS);
   keepScreenOn();
+  liveTick();
+}
+
+// Fetch fresh live data for the lines still ahead (throttled inside), then redraw
+function liveTick() {
+  const tracker = state.tracker;
+  if (!tracker) return;
+  if (state.live.usable) {
+    const ids = [...new Set(tracker.legs.slice(tracker.legIndex).filter((l) => l.kind === "ride").map((l) => l.route.id))];
+    state.live.refresh(ids).then((changed) => {
+      renderDataPill();
+      if (changed) renderLive();
+    });
+  }
   renderLive();
 }
 
@@ -374,7 +614,7 @@ function stopLive() {
   state.tracker = null;
   state.wakeLock?.release().catch(() => {});
   state.wakeLock = null;
-  els.alert.hidden = true;
+  els.toast.hidden = true;
 }
 
 function renderLive() {
@@ -389,13 +629,13 @@ function renderLive() {
   if (remaining.legs.length) {
     const exits = (st.choices ?? [])
       .filter((c) => c.exit.position !== st.chosenExit)
-      .map((c) => ({ lat: net.lat[c.exit.stop], lon: net.lon[c.exit.stop], label: `${c.exit.name} → ${c.exit.then}` }));
+      .map((c) => ({ lat: net.lat[c.exit.stop], lon: net.lon[c.exit.stop], label: c.exit.then }));
     state.map.show(net, remaining, { exits, fit: state.shownLeg !== tracker.legIndex });
     state.shownLeg = tracker.legIndex;
   }
 
-  if (st.alert === "next") showAlert(`Next stop: ${st.leg.toStop.name}. Get ready to get off.`, [200, 100, 200]);
-  if (st.alert === "now") showAlert(`Get off now at ${st.leg.toStop.name}`, [500, 200, 500, 200, 500]);
+  if (st.alert === "next") showToast(`Next stop: ${st.leg.toStop.name}. Get ready to get off.`, [200, 100, 200]);
+  if (st.alert === "now") showToast(`Get off now at ${st.leg.toStop.name}`, [500, 200, 500, 200, 500]);
 
   const sheet = [];
   if (st.phase === "done") {
@@ -406,88 +646,103 @@ function renderLive() {
     return;
   }
 
-  sheet.push(nowCard(st, now));
+  sheet.push(nowCard(st));
 
   if (st.choices && st.choices.length > 0) {
     sheet.push(
       choicesSection(st.leg, st.choices, st.chosenExit, (picked) => {
         tracker.chooseExit(picked);
-        els.alert.hidden = true;
+        els.toast.hidden = true;
         renderLive();
       })
     );
   }
 
   if (state.pickingStop && st.leg.kind === "ride") sheet.push(stopPicker(st));
+
+  const alerts = alertsSection(tripAlerts([{ legs: remaining.legs }]));
+  if (alerts) sheet.push(alerts);
+
   sheet.push(legList(tracker.legs, tracker.legIndex));
   sheet.push(button("secondary wide", "End trip", endTrip));
   els.sheet.replaceChildren(...sheet);
 }
 
 // The big "what to do now" card
-function nowCard(st, now) {
+function nowCard(st) {
   const card = el("div", "now-card");
   const title = el("div", "now-title");
   const detail = el("div", "now-detail");
   const actions = el("div", "button-row");
-  card.append(title, detail);
 
   if (st.phase === "walk") {
     const leg = st.leg;
-    title.append(st.final ? "Walk to your destination" : `Walk to ${leg.to.name}`);
+    card.append(el("div", "label", "Walk"));
+    title.append(st.final ? "To your destination" : `To ${leg.to.name}`);
     const minutes = Math.max(1, Math.round(leg.seconds / 60));
     detail.textContent =
       st.metersLeft != null ? `About ${Math.round(st.metersLeft)} m to go` : `About ${minutes} min · ${Math.round(leg.meters)} m`;
+    card.append(title, detail);
     actions.append(
-      st.final
-        ? button("primary", "I've arrived", () => {
-            state.tracker.arrivedAtStop();
-            renderLive();
-          })
-        : button("primary", "I'm at the stop", () => {
-            state.tracker.arrivedAtStop();
-            renderLive();
-          })
+      button("primary", st.final ? "I've arrived" : "I'm at the stop", () => {
+        state.tracker.arrivedAtStop();
+        renderLive();
+      })
     );
   } else if (st.phase === "wait") {
-    title.append(routeBadge(st.leg.route), `toward ${st.leg.headsign}`);
-    detail.textContent =
-      `At ${st.leg.fromStop.name}. Runs about every ${st.headwayMinutes} min` +
-      (st.waitMinutes > 0 ? `, next in about ${st.waitMinutes} min.` : ".");
-    card.append(el("div", "now-note", "Estimated from the schedule."));
-    actions.append(button("primary", "I'm on board", () => {
-      state.tracker.boardedNow(new Date());
-      renderLive();
-    }));
+    card.append(el("div", "label", `Wait at ${st.leg.fromStop.name}`));
+    title.append(routeBadge(st.leg.route), `toward ${headsign(st.leg.headsign)}`);
+    card.append(title);
+    if (st.nextTrains?.length) {
+      const trains = el("div", "next-trains");
+      trains.append(st.nextTrains.join(" · "), el("small", null, "min"), el("span", "tag live", "live"));
+      card.append(trains);
+    } else {
+      detail.textContent =
+        `Runs about every ${st.headwayMinutes} min` + (st.waitMinutes > 0 ? `, next in about ${st.waitMinutes} min.` : ".");
+      card.append(detail, el("div", "now-note", "Estimated from the schedule."));
+    }
+    actions.append(
+      button("primary", "I'm on board", () => {
+        state.tracker.boardedNow(new Date());
+        renderLive();
+      })
+    );
   } else {
     const exitName = st.leg.toStop.name;
     if (st.phase === "getoff") {
       card.classList.add("getoff");
-      title.append(`Get off now: ${exitName}`);
+      card.append(el("div", "label", "Get off now"));
+      title.append(exitName);
       detail.textContent = `Then ${describeNext(state.tracker)}.`;
+      card.append(title, detail);
     } else {
-      title.append(routeBadge(st.leg.route), st.nextStop ? `Next: ${st.nextStop}` : `toward ${st.leg.headsign}`);
-      detail.textContent = `Get off at ${exitName} · ${st.stopsLeft} stop${st.stopsLeft === 1 ? "" : "s"} away`;
+      card.append(el("div", "label", st.nextStop ? `Next stop · ${st.nextStop}` : `Toward ${headsign(st.leg.headsign)}`));
+      title.append(routeBadge(st.leg.route), `${st.stopsLeft} stop${st.stopsLeft === 1 ? "" : "s"} to ${exitName}`);
+      detail.textContent = `Get off around ${clock(st.leg.arrive)}`;
+      if (st.leg.live) detail.append("  ", el("span", "tag live", "live"));
       const gpsQuiet = Date.now() - state.lastFixAt > NO_GPS_AFTER_MS;
-      card.append(
-        el(
-          "div",
-          "now-note",
-          st.confirmed && !gpsQuiet
+      const note =
+        st.source === "live"
+          ? "Following your train with live MTA data."
+          : st.source === "gps" && !gpsQuiet
             ? "Position from GPS."
-            : "No GPS here (underground?), so position is estimated from the schedule. Tap I'm here if it's off."
-        )
+            : "No signal, so position is estimated from the schedule. Tap I'm here if it's off.";
+      card.append(title, detail, el("div", "now-note", note));
+      actions.append(
+        button("secondary", state.pickingStop ? "Close" : "I'm here…", () => {
+          state.pickingStop = !state.pickingStop;
+          renderLive();
+        })
       );
-      actions.append(button("secondary", state.pickingStop ? "Close" : "I'm here…", () => {
-        state.pickingStop = !state.pickingStop;
-        renderLive();
-      }));
     }
-    actions.append(button("primary", "I got off", () => {
-      state.tracker.gotOff();
-      els.alert.hidden = true;
-      renderLive();
-    }));
+    actions.append(
+      button("primary", "I got off", () => {
+        state.tracker.gotOff();
+        els.toast.hidden = true;
+        renderLive();
+      })
+    );
   }
   card.append(actions);
   return card;
@@ -495,7 +750,7 @@ function nowCard(st, now) {
 
 // "I'm here": the stops from here to the end of the line
 function stopPicker(st) {
-  const list = el("ul", "stop-picker");
+  const list = el("ul", "list stop-picker");
   const pattern = st.pattern;
   for (let j = st.position; j < pattern.stops.length; j++) {
     const li = document.createElement("li");
@@ -526,12 +781,12 @@ function endTrip() {
   history.back();
 }
 
-function showAlert(text, pattern) {
-  els.alert.textContent = text;
-  els.alert.hidden = false;
-  navigator.vibrate?.(pattern);
-  clearTimeout(showAlert.timer);
-  showAlert.timer = setTimeout(() => (els.alert.hidden = true), 12000);
+function showToast(text, vibrate = null) {
+  els.toast.textContent = text;
+  els.toast.hidden = false;
+  if (vibrate) navigator.vibrate?.(vibrate);
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => (els.toast.hidden = true), vibrate ? 12000 : 3500);
 }
 
 async function keepScreenOn() {
@@ -561,18 +816,19 @@ function legList(legs, currentIndex) {
     } else {
       li.style.setProperty("--leg-color", `#${leg.route.color}`);
       icon.append(routeBadge(leg.route));
-      const stops = leg.to - leg.from;
-      main.append(el("div", "leg-main", `toward ${leg.headsign}`));
-      main.append(
-        el(
-          "div",
-          "leg-detail",
-          `Board at ${leg.fromStop.name} · ${clock(leg.board)} (every ~${Math.round((leg.wait * 2) / 60)} min)\n` +
-            `Ride ${stops} stop${stops === 1 ? "" : "s"} · ${Math.round((leg.arrive - leg.board) / 60000)} min\n` +
-            `Get off at ${leg.toStop.name} · ${clock(leg.arrive)}`
-        )
+      main.append(el("div", "leg-main", `toward ${headsign(leg.headsign)}`));
+      const stops = el("div", "leg-stops");
+      stops.append(stopLine(leg.fromStop.name, leg.board), stopLine(leg.toStop.name, leg.arrive));
+      main.append(stops);
+      const count = leg.to - leg.from;
+      const headway = leg.headway ?? Math.round((leg.wait * 2) / 60);
+      const detail = el(
+        "div",
+        "leg-detail",
+        `${count} stop${count === 1 ? "" : "s"} · ${Math.round((leg.arrive - leg.board) / 60000)} min · every ~${headway} min  `
       );
-      main.lastChild.style.whiteSpace = "pre-line";
+      if (leg.live) detail.append(el("span", "tag live", "live train"));
+      main.append(detail);
     }
     li.append(icon, main);
     list.append(li);
@@ -580,14 +836,40 @@ function legList(legs, currentIndex) {
   return list;
 }
 
-// Small icons for a trip's legs: 🚶 › 4 › Bx11 › 🚶
+function stopLine(name, time) {
+  const line = el("div", "leg-stop");
+  const t = el("time", null, clock(time));
+  line.append(el("span", null, name), t);
+  return line;
+}
+
+function minutesEl(minutes) {
+  const m = el("div", "minutes", String(minutes));
+  m.append(el("small", null, "min"));
+  return m;
+}
+
+function sourceTag(live) {
+  return live ? el("span", "tag live", "live times") : el("span", "tag", "schedule");
+}
+
+// Small icons for a trip's legs: 4 › Bx11 (walks only when they're a real part of it)
+const NOTABLE_WALK_SECONDS = 3 * 60;
 function legChips(legs) {
+  const shown = legs.filter((leg) => leg.kind === "ride" || leg.seconds >= NOTABLE_WALK_SECONDS || legs.length === 1);
   const chips = [];
-  legs.forEach((leg, i) => {
+  shown.forEach((leg, i) => {
     if (i) chips.push(el("span", "sep", "›"));
     chips.push(leg.kind === "walk" ? walkIcon() : routeBadge(leg.route));
   });
   return chips;
+}
+
+// Bus signs are often capitals and abbreviated: "WASHNGTN HTS G W BRIDGE via E 174 ST"
+function headsign(text) {
+  const main = text.split(/\s+via\s+/i)[0].trim();
+  if (main !== main.toUpperCase()) return main;
+  return main.toLowerCase().replace(/\b([a-z])([a-z]*)/g, (_, first, rest) => first.toUpperCase() + rest);
 }
 
 // What you'd take after an exit: route badges, or "walk"
@@ -635,7 +917,7 @@ function clock(date) {
 function formatFeedDate(yyyymmdd) {
   if (!yyyymmdd) return "the current timetable";
   const d = new Date(+yyyymmdd.slice(0, 4), +yyyymmdd.slice(4, 6) - 1, +yyyymmdd.slice(6, 8));
-  return d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
 function setStatus(text, isError = false) {
@@ -650,7 +932,8 @@ function showView(name) {
   els.planView.hidden = trip;
   els.tripView.hidden = !trip;
   els.back.hidden = !trip;
-  els.title.textContent = trip ? "Trip" : "Forkway";
+  els.title.textContent = trip ? "Trip" : "forkway";
+  if (!trip) state.trip = null;
 }
 
 // Android's back button: from a trip, back to the results
@@ -728,10 +1011,18 @@ function wireEvents() {
     plan();
   });
   els.back.addEventListener("click", () => history.back());
+  els.dataPill.addEventListener("click", () => state.live && setLiveEnabled(!state.live.enabled));
+  for (const type of ["online", "offline"]) {
+    window.addEventListener(type, () => {
+      renderData();
+      if (type === "online") state.live?.refresh(state.results ? routesOf(state.results.scheduled) : [], { force: true }).then(renderData);
+      if (state.results) applyLive();
+    });
+  }
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.tracker) {
       keepScreenOn();
-      renderLive();
+      liveTick();
     }
   });
 }

@@ -6,6 +6,7 @@
     "data": "node tools/build-data.mjs --refresh",
     "icons": "node tools/make-icons.mjs",
     "test": "node tools/test-router.mjs",
+    "test:live": "node tools/test-realtime.mjs",
     "start": "npx serve ."
   }
 }

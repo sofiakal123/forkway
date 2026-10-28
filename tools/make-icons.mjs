@@ -1,4 +1,4 @@
-// Draws the app icons (a white fork on teal: one line splitting into three)
+// Draws the app icons (a light fork on ink: one line splitting into three)
 // and saves them as PNGs, using only Node's built-in zlib.
 //   node tools/make-icons.mjs
 import fs from "node:fs";
@@ -7,8 +7,8 @@ import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 const OUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "icons");
-const TEAL = [15, 118, 110];
-const WHITE = [255, 255, 255];
+const TEAL = [25, 27, 27]; // ink
+const WHITE = [246, 245, 241]; // paper
 
 // The fork, in a 0..1 square: a stem that splits into three branches
 const SEGMENTS = [

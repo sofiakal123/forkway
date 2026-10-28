@@ -144,9 +144,10 @@ function walkLeg(from, to, start) {
 }
 
 // Ride pattern p from stop position i to j, arriving at the stop at `start`
-function rideLeg(net, p, i, j, start) {
+// (or already on board there at `start`, so with no wait)
+function rideLeg(net, p, i, j, start, onBoard = false) {
   const pattern = net.patterns[p];
-  const wait = net.waitSeconds(p, i, start);
+  const wait = onBoard ? 0 : net.waitSeconds(p, i, start);
   if (!Number.isFinite(wait)) return null;
   const board = addSeconds(start, wait);
   const arrive = addSeconds(board, pattern.cum[j] - pattern.cum[i]);
@@ -213,7 +214,7 @@ function nextRoute(search, s) {
 // Every worthwhile place to get off pattern p after stop position i, given
 // that you'll be at position i at `boardTime`. Each choice is a full trip
 // from that point, distinct in how it continues.
-function exitChoices(search, p, i, boardTime, legsBefore, depart, firstRideWait) {
+function exitChoices(search, p, i, boardTime, legsBefore, depart, firstRideWait, onBoard = false) {
   const { net, cost, next, layout, S } = search;
   const pattern = net.patterns[p];
   const candidates = [];
@@ -238,7 +239,7 @@ function exitChoices(search, p, i, boardTime, legsBefore, depart, firstRideWait)
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const ride = rideLeg(net, p, i, c.j, boardTime);
+    const ride = rideLeg(net, p, i, c.j, boardTime, onBoard);
     if (!ride) continue;
     const rest = continueFrom(search, c.s, ride.end);
     if (!rest) continue;
@@ -319,7 +320,7 @@ export function planTrips(net, origin, dest, time) {
 // While riding pattern p, now at stop position i: every place you could get
 // off from here on, each with the rest of the trip
 export function exitChoicesWhileRiding(search, p, i, now) {
-  return exitChoices(search, p, i, now, [], now, 0);
+  return exitChoices(search, p, i, now, [], now, 0, true);
 }
 
 function addSeconds(date, seconds) {

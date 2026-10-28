@@ -5,37 +5,47 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Forkway</title>
   <meta name="description" content="NYC transit directions that show every place you could switch lines, while you ride.">
-  <meta name="theme-color" content="#0f766e">
+  <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111212" media="(prefers-color-scheme: dark)">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="preload" href="fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-  <header class="appbar">
+  <header class="topbar">
     <button class="icon-button" id="back" aria-label="Back" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
     </button>
-    <h1 id="title">Forkway</h1>
+    <span class="brand" id="title">forkway</span>
+    <button class="data-pill" id="data-pill" type="button" aria-live="polite">
+      <span class="data-dot" aria-hidden="true"></span>
+      <span id="data-label">Saved data</span>
+    </button>
   </header>
 
-  <div class="alert" id="alert" role="alert" hidden></div>
+  <div class="toast" id="alert" role="alert" hidden></div>
 
   <!-- Plan a trip -->
   <main class="view" id="plan-view">
+    <h1 class="headline">Where to?</h1>
+
     <form class="planner" id="plan-form" autocomplete="off">
-      <div class="place-field">
-        <span class="dot start" aria-hidden="true"></span>
-        <label class="sr-only" for="from-input">From</label>
-        <input id="from-input" placeholder="Current location" enterkeyhint="next">
-        <button type="button" class="icon-button" id="use-location" aria-label="Use my location">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>
-        </button>
-      </div>
-      <div class="place-field">
-        <span class="dot end" aria-hidden="true"></span>
-        <label class="sr-only" for="to-input">To</label>
-        <input id="to-input" placeholder="Where to? (e.g. W 181 St & Amsterdam)" enterkeyhint="search">
+      <div class="places">
+        <div class="place-field">
+          <span class="marker from" aria-hidden="true"></span>
+          <label class="sr-only" for="from-input">From</label>
+          <input id="from-input" placeholder="Current location" enterkeyhint="next">
+          <button type="button" class="icon-button small" id="use-location" aria-label="Use my location">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></svg>
+          </button>
+        </div>
+        <div class="place-field">
+          <span class="marker to" aria-hidden="true"></span>
+          <label class="sr-only" for="to-input">To</label>
+          <input id="to-input" placeholder="Search a stop, street or place" enterkeyhint="search">
+        </div>
       </div>
       <ul class="suggestions" id="suggestions" role="listbox" hidden></ul>
       <div class="when">
@@ -51,12 +61,16 @@
     <p class="status" id="status" role="status"></p>
     <section class="results" id="results" aria-label="Trip options"></section>
 
-    <section class="recents" id="recents" hidden>
-      <h2>Recent</h2>
-      <ul id="recent-list"></ul>
+    <section class="block" id="recents" hidden>
+      <h2 class="label">Recent</h2>
+      <ul class="list" id="recent-list"></ul>
     </section>
 
-    <p class="footnote" id="footnote"></p>
+    <section class="block" aria-label="Data">
+      <h2 class="label">Data</h2>
+      <div class="list data-panel" id="data-panel"></div>
+      <p class="fine" id="footnote"></p>
+    </section>
   </main>
 
   <!-- A trip: preview, then live -->
@@ -68,7 +82,7 @@
     </div>
   </section>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

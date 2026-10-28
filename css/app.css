@@ -1,34 +1,43 @@
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("../fonts/bricolage-grotesque.woff2") format("woff2");
+  font-weight: 400 800;
+  font-display: swap;
+}
+
 :root {
-  --bg: #f4f6f8;
+  --bg: #f6f5f1;
   --surface: #ffffff;
-  --text: #0f172a;
-  --muted: #64748b;
-  --border: #e2e8f0;
-  --accent: #0f766e;
-  --accent-soft: #ccfbf1;
-  --choice: #7c3aed;
-  --choice-soft: #ede9fe;
-  --danger: #dc2626;
-  --warn-bg: #fef3c7;
-  --warn-text: #92400e;
-  --radius: 14px;
-  --appbar: 56px;
+  --ink: #191b1b;
+  --muted: #7a7c79;
+  --faint: #a6a8a4;
+  --line: #e8e6e0;
+  --accent: #2e7cf6;
+  --accent-soft: #ebf2fe;
+  --live: #1fb84a;
+  --warn: #a8640a;
+  --warn-soft: #fbf3e4;
+  --radius: 18px;
+  --topbar: 56px;
+  --display: "Bricolage Grotesque", system-ui, sans-serif;
+  --body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b1220;
-    --surface: #131c2e;
-    --text: #e2e8f0;
-    --muted: #94a3b8;
-    --border: #24314a;
-    --accent: #2dd4bf;
-    --accent-soft: #134e4a;
-    --choice: #a78bfa;
-    --choice-soft: #2e1f5e;
-    --warn-bg: #422006;
-    --warn-text: #fcd34d;
+    --bg: #111212;
+    --surface: #1a1b1b;
+    --ink: #ecebe7;
+    --muted: #9a9c99;
+    --faint: #6c6e6c;
+    --line: #2a2b2b;
+    --accent: #6aa8ff;
+    --accent-soft: #1c2a40;
+    --live: #3ddc6c;
+    --warn: #f0b45c;
+    --warn-soft: #2e2412;
     color-scheme: dark;
   }
 }
@@ -48,10 +57,13 @@ body {
 }
 
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.45;
   background: var(--bg);
-  color: var(--text);
+  color: var(--ink);
   -webkit-tap-highlight-color: transparent;
+  -webkit-font-smoothing: antialiased;
 }
 
 h1,
@@ -72,6 +84,10 @@ button {
   cursor: pointer;
 }
 
+a {
+  color: inherit;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -80,25 +96,86 @@ button {
   clip: rect(0 0 0 0);
 }
 
-/* --- App bar ------------------------------------------------------------- */
+/* Small uppercase labels, like a timetable */
+.label {
+  font-family: var(--mono);
+  font-size: 0.69rem;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 
-.appbar {
+.fine {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* --- Top bar ----------------------------------------------------------------- */
+
+.topbar {
   position: sticky;
   top: 0;
   z-index: 1000;
-  height: var(--appbar);
-  padding: 0 12px env(0px) 16px;
+  height: var(--topbar);
+  padding: 0 12px 0 16px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: var(--accent);
-  color: white;
+  gap: 6px;
+  background: var(--bg);
 }
 
-.appbar h1 {
-  font-size: 1.15rem;
+.brand {
+  flex: 1;
+  font-family: var(--display);
+  font-size: 1.3rem;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.02em;
+}
+
+.data-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.data-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--faint);
+}
+
+.data-pill[data-state="live"] {
+  color: var(--ink);
+}
+
+.data-pill[data-state="live"] .data-dot {
+  background: var(--live);
+  border-color: var(--live);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 22%, transparent);
+}
+
+.data-pill[data-state="connecting"] .data-dot {
+  border-color: var(--live);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .icon-button {
@@ -112,38 +189,45 @@ button {
   flex: none;
 }
 
+.icon-button.small {
+  width: 36px;
+  height: 36px;
+}
+
 .icon-button svg {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2.2;
+  stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
 .icon-button:active {
-  background: rgba(127, 127, 127, 0.2);
+  background: var(--line);
 }
 
-/* --- Alert banner --------------------------------------------------------- */
+/* --- Toast (get-off alerts) ----------------------------------------------------- */
 
-.alert {
+.toast {
   position: fixed;
-  top: calc(var(--appbar) + 8px);
+  top: calc(var(--topbar) + 6px);
   left: 12px;
   right: 12px;
   z-index: 1100;
-  padding: 14px 16px;
-  border-radius: var(--radius);
-  background: var(--choice);
-  color: white;
-  font-weight: 700;
+  max-width: 616px;
+  margin: 0 auto;
+  padding: 14px 18px;
+  border-radius: 16px;
+  background: var(--ink);
+  color: var(--bg);
+  font-family: var(--display);
+  font-weight: 600;
   font-size: 1.05rem;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 }
 
-/* --- Plan view ------------------------------------------------------------ */
+/* --- Plan view ------------------------------------------------------------------ */
 
 .view {
   max-width: 640px;
@@ -151,27 +235,56 @@ button {
 }
 
 #plan-view {
-  padding: 12px 16px 32px;
+  padding: 4px 16px 40px;
+}
+
+.headline {
+  font-family: var(--display);
+  font-size: 2.1rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin: 12px 2px 18px;
 }
 
 .planner {
-  position: relative;
   display: grid;
-  gap: 8px;
-  background: var(--surface);
-  padding: 12px;
+  gap: 10px;
+}
+
+.places {
+  position: relative;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  background: var(--surface);
+}
+
+/* The thin line joining the from and to markers */
+.places::before {
+  content: "";
+  position: absolute;
+  left: 21px;
+  top: 30px;
+  bottom: 30px;
+  border-left: 1.5px dotted var(--faint);
 }
 
 .place-field {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 4px 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg);
+  gap: 12px;
+  padding: 0 6px 0 17px;
+  min-height: 54px;
+}
+
+.place-field + .place-field {
+  border-top: 1px solid var(--line);
+  margin-left: 40px;
+  padding-left: 0;
+}
+
+.place-field + .place-field .marker {
+  margin-left: -27px;
 }
 
 .place-field input {
@@ -179,61 +292,61 @@ button {
   min-width: 0;
   border: none;
   background: transparent;
-  padding: 13px 0;
+  padding: 15px 0;
   outline: none;
+  font-size: 1rem;
 }
 
-.place-field:focus-within {
-  border-color: var(--accent);
+.place-field input::placeholder {
+  color: var(--faint);
 }
 
-.dot {
-  width: 12px;
-  height: 12px;
+.marker {
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   flex: none;
+  position: relative;
+  z-index: 1;
 }
 
-.dot.start {
-  background: #16a34a;
+.marker.from {
+  border: 2px solid var(--ink);
+  background: var(--surface);
 }
 
-.dot.end {
-  background: var(--danger);
+.marker.to {
+  background: var(--accent);
 }
 
 .suggestions {
   list-style: none;
   margin: 0;
-  padding: 4px 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  padding: 6px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
   background: var(--surface);
-  max-height: 50vh;
+  max-height: 52vh;
   overflow-y: auto;
 }
 
 .suggestions li {
-  padding: 10px 14px;
+  padding: 10px 16px;
   cursor: pointer;
 }
 
 .suggestions li:active,
 .suggestions li.active {
-  background: var(--accent-soft);
+  background: var(--bg);
 }
 
 .suggestions .group {
-  padding: 6px 14px 2px;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
+  padding: 10px 16px 4px;
   cursor: default;
 }
 
 .suggestion-name {
-  font-weight: 600;
+  font-weight: 550;
 }
 
 .suggestion-detail {
@@ -248,10 +361,12 @@ button {
 
 .when select,
 .when input {
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg);
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.88rem;
 }
 
 .when input {
@@ -260,24 +375,35 @@ button {
 }
 
 button.primary {
+  height: 52px;
   border: none;
-  border-radius: 12px;
-  padding: 14px 18px;
-  background: var(--accent);
-  color: white;
-  font-weight: 700;
+  border-radius: 999px;
+  padding: 0 22px;
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 600;
+  font-size: 1rem;
 }
 
 button.primary:disabled {
-  opacity: 0.6;
+  opacity: 0.45;
 }
 
 button.secondary {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px 16px;
+  height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 18px;
   background: var(--surface);
-  font-weight: 600;
+  font-weight: 550;
+}
+
+button.text {
+  border: none;
+  background: none;
+  padding: 6px 0;
+  color: var(--accent);
+  font-weight: 550;
 }
 
 .wide {
@@ -285,86 +411,102 @@ button.secondary {
 }
 
 .status {
-  margin: 14px 4px 0;
+  margin: 16px 2px 0;
   color: var(--muted);
   min-height: 1.2em;
 }
 
-.status.error {
-  color: var(--danger);
+.status:empty {
+  margin: 0;
+  min-height: 0;
 }
 
-/* --- Trip option cards ------------------------------------------------------ */
+.status.error {
+  color: var(--warn);
+}
+
+/* --- Trip option cards ------------------------------------------------------------- */
 
 .results {
   display: grid;
   gap: 10px;
-  margin-top: 10px;
+  margin-top: 14px;
 }
 
 .trip-card {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
   text-align: left;
-  padding: 14px;
-  border: 1px solid var(--border);
+  padding: 16px 18px;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
 }
 
 .trip-card:active {
-  border-color: var(--accent);
+  border-color: var(--faint);
 }
 
-.trip-top {
+.trip-head {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.trip-legs {
-  flex: 1;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-}
-
-.trip-time {
-  text-align: right;
-  flex: none;
-}
-
-.trip-minutes {
-  font-size: 1.35rem;
-  font-weight: 800;
-}
-
-.trip-minutes small {
-  font-size: 0.8rem;
+.minutes {
+  font-family: var(--display);
+  font-size: 1.9rem;
   font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
 }
 
-.trip-arrive,
-.trip-sub {
-  font-size: 0.85rem;
+.minutes small {
+  font-size: 0.95rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  margin-left: 2px;
   color: var(--muted);
 }
 
-.fork-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--choice-soft);
-  font-size: 0.85rem;
+.arrive {
+  font-size: 0.88rem;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
-.fork-summary strong {
-  color: var(--choice);
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.trip-sub {
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.forks {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.fork-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 0.86rem;
+}
+
+.fork-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 /* Line badges: subway lines are circles, buses are rounded rectangles */
@@ -375,10 +517,11 @@ button.secondary {
   min-width: 26px;
   height: 26px;
   padding: 0 7px;
-  border-radius: 6px;
-  font-size: 0.82rem;
-  font-weight: 800;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  font-weight: 700;
   line-height: 1;
+  flex: none;
 }
 
 .route.subway {
@@ -390,15 +533,19 @@ button.secondary {
 .route.small {
   min-width: 20px;
   height: 20px;
-  font-size: 0.7rem;
+  font-size: 0.68rem;
+  border-radius: 6px;
+  padding: 0 5px;
 }
 
 .route.subway.small {
   width: 20px;
+  padding: 0;
+  border-radius: 50%;
 }
 
 .sep {
-  color: var(--muted);
+  color: var(--faint);
   font-size: 0.8rem;
 }
 
@@ -407,88 +554,203 @@ button.secondary {
   height: 18px;
   fill: currentColor;
   color: var(--muted);
+  flex: none;
 }
 
-/* --- Recents ------------------------------------------------------------------ */
-
-.recents {
-  margin-top: 20px;
-}
-
-.recents h2 {
-  font-size: 0.8rem;
+/* "live" and "schedule" marks next to times */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--muted);
-  margin: 0 4px 6px;
+  vertical-align: middle;
 }
 
-.recents ul {
+.tag.live {
+  color: var(--live);
+}
+
+.tag.live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* --- Lists: recents and data ---------------------------------------------------------- */
+
+.block {
+  margin-top: 28px;
+  display: grid;
+  gap: 8px;
+}
+
+.block .label {
+  margin: 0 2px;
+}
+
+.list {
   list-style: none;
   margin: 0;
   padding: 0;
-  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
 }
 
-.recents li button {
+.list > li + li,
+.list > .row + .row {
+  border-top: 1px solid var(--line);
+}
+
+.list li > button {
   width: 100%;
   text-align: left;
-  padding: 12px 14px;
+  padding: 14px 18px;
   border: none;
-  border-bottom: 1px solid var(--border);
   background: none;
 }
 
-.recents li:last-child button {
-  border-bottom: none;
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 18px;
 }
 
-.footnote {
-  margin: 24px 4px 0;
-  font-size: 0.78rem;
+.row-text {
+  min-width: 0;
+}
+
+.row-title {
+  font-weight: 550;
+}
+
+.row-detail {
+  font-size: 0.82rem;
   color: var(--muted);
-  line-height: 1.5;
 }
 
-/* --- Trip view (map + sheet) ------------------------------------------------- */
+.switch {
+  appearance: none;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--line);
+  position: relative;
+  margin: 0;
+  transition: background 0.15s;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+}
+
+.switch:checked {
+  background: var(--live);
+}
+
+.switch:checked::after {
+  transform: translateX(18px);
+}
+
+.small-button {
+  flex: none;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.85rem;
+  font-weight: 550;
+}
+
+.small-button:disabled {
+  opacity: 0.5;
+}
+
+.block .fine {
+  margin: 2px 2px 0;
+}
+
+/* --- Trip view (map + sheet) ------------------------------------------------------------ */
 
 .trip-view {
   max-width: none;
-  height: calc(100dvh - var(--appbar));
+  height: calc(100dvh - var(--topbar));
   display: grid;
-  grid-template-rows: 40% 60%;
+  grid-template-rows: 42% 58%;
 }
 
 .map {
   min-height: 0;
   z-index: 0;
+  background: var(--bg);
+}
+
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-attrib.maplibregl-compact {
+  font-size: 10px;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  color: var(--muted);
+}
+
+.maplibregl-ctrl-attrib a {
+  color: var(--muted);
+}
+
+@media (prefers-color-scheme: dark) {
+  .maplibregl-ctrl-attrib-button {
+    filter: invert(1);
+  }
+}
+
+/* Keep the map credit clear of the sheet's rounded top */
+.maplibregl-ctrl-bottom-right {
+  bottom: 22px;
 }
 
 .sheet {
   min-height: 0;
   overflow-y: auto;
-  background: var(--surface);
-  border-radius: 18px 18px 0 0;
-  margin-top: -16px;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  border-radius: 22px 22px 0 0;
+  margin-top: -20px;
   position: relative;
   z-index: 500;
-  padding: 8px 16px calc(24px + env(safe-area-inset-bottom));
-  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.12);
+  padding: 8px 16px calc(28px + env(safe-area-inset-bottom));
 }
 
 .sheet-handle {
-  width: 40px;
+  width: 36px;
   height: 4px;
   border-radius: 2px;
-  background: var(--border);
-  margin: 0 auto 12px;
+  background: var(--line);
+  margin: 0 auto 14px;
 }
 
-.sheet-content,
 #sheet-content {
   display: grid;
-  gap: 14px;
+  gap: 18px;
   max-width: 640px;
   margin: 0 auto;
 }
@@ -496,139 +758,151 @@ button.secondary {
 .summary {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: flex-end;
   gap: 12px;
+  padding: 0 2px;
 }
 
-.summary-minutes {
-  font-size: 1.6rem;
-  font-weight: 800;
+.summary .minutes {
+  font-size: 2.4rem;
 }
 
 .summary-times {
-  color: var(--muted);
+  text-align: right;
   font-size: 0.9rem;
+  color: var(--muted);
 }
 
-.section-title {
-  font-size: 0.95rem;
-  font-weight: 700;
+.section {
+  display: grid;
+  gap: 8px;
+}
+
+.section > .label {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin: 0 2px;
 }
 
 /* Exit choices: the heart of the app */
 .choices {
-  display: grid;
-  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
 }
 
 .choice {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   width: 100%;
   text-align: left;
-  padding: 11px 12px;
-  border: 2px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
+  padding: 14px 18px;
+  border: none;
+  background: none;
+}
+
+.choice + .choice {
+  border-top: 1px solid var(--line);
 }
 
 .choice.selected {
-  border-color: var(--choice);
-  background: var(--choice-soft);
+  background: var(--accent-soft);
 }
 
 .choice-radio {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  border: 2px solid var(--muted);
+  border: 1.5px solid var(--faint);
   display: grid;
   place-items: center;
 }
 
 .choice.selected .choice-radio {
-  border-color: var(--choice);
+  border-color: var(--accent);
 }
 
 .choice.selected .choice-radio::after {
   content: "";
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
-  background: var(--choice);
+  background: var(--accent);
 }
 
 .choice-stop {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .choice-then {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 5px;
   align-items: center;
   margin-top: 3px;
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   color: var(--muted);
 }
 
 .choice-time {
   text-align: right;
-  font-weight: 700;
+  font-family: var(--display);
+  font-size: 1.1rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .choice-time small {
   display: block;
-  font-weight: 600;
-  font-size: 0.75rem;
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--muted);
 }
 
-.tag {
-  display: inline-block;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  background: var(--accent-soft);
+.choice.selected .choice-time small.best,
+.choice-time small.best {
   color: var(--accent);
 }
 
-/* Step-by-step legs */
+/* Step-by-step legs, as a quiet timeline */
 .legs {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 16px 18px 2px;
   display: grid;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 
 .leg {
   display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: 10px;
-  padding-bottom: 14px;
+  grid-template-columns: 28px 1fr;
+  gap: 12px;
+  padding-bottom: 16px;
   position: relative;
 }
 
 .leg::before {
   content: "";
   position: absolute;
-  left: 16px;
+  left: 13px;
   top: 30px;
-  bottom: 2px;
-  width: 3px;
-  border-radius: 2px;
-  background: var(--leg-color, var(--border));
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--leg-color, var(--line));
 }
 
 .leg.walk::before {
-  background: repeating-linear-gradient(var(--muted) 0 4px, transparent 4px 9px);
-  width: 3px;
+  background: repeating-linear-gradient(var(--faint) 0 2px, transparent 2px 7px);
 }
 
 .leg:last-child::before {
@@ -638,100 +912,241 @@ button.secondary {
 .leg-icon {
   display: grid;
   place-items: center;
-  height: 30px;
+  height: 26px;
 }
 
 .leg-main {
-  font-weight: 650;
+  font-weight: 600;
+}
+
+.leg-stops {
+  margin-top: 4px;
+  display: grid;
+  gap: 1px;
+  font-size: 0.88rem;
+}
+
+.leg-stop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.leg-stop time {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .leg-detail {
-  font-size: 0.86rem;
+  font-size: 0.82rem;
   color: var(--muted);
-  margin-top: 2px;
-  line-height: 1.45;
+  margin-top: 4px;
 }
 
 .leg.done {
-  opacity: 0.45;
+  opacity: 0.4;
 }
 
 .leg.current .leg-main {
   color: var(--accent);
 }
 
-/* --- Live trip ------------------------------------------------------------- */
+/* Service alerts */
+.alerts {
+  display: grid;
+  gap: 8px;
+}
+
+.alert-item {
+  border-radius: 14px;
+  background: var(--warn-soft);
+  padding: 12px 16px;
+  font-size: 0.88rem;
+}
+
+.alert-item summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.alert-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.alert-item summary::before {
+  content: "";
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.alert-title {
+  font-weight: 550;
+}
+
+.alert-title .route {
+  vertical-align: -4px;
+  margin: 0 1px;
+}
+
+.alert-type {
+  display: block;
+  margin-top: 2px;
+  color: var(--warn);
+}
+
+.alert-text {
+  margin: 8px 0 0 17px;
+  white-space: pre-line;
+  color: var(--muted);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.alert-count {
+  font-size: 0.82rem;
+  color: var(--warn);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.alert-count::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+/* Open in other apps */
+.compare {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 18px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.compare a {
+  color: var(--muted);
+  text-underline-offset: 3px;
+}
+
+/* --- Live trip ------------------------------------------------------------------------- */
 
 .now-card {
   display: grid;
-  gap: 6px;
-  padding: 14px;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--accent-soft);
+  background: var(--surface);
 }
 
 .now-card.getoff {
-  background: var(--choice);
-  color: white;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.now-card.getoff .label,
+.now-card.getoff .now-note {
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .now-title {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
-  font-size: 1.2rem;
-  font-weight: 800;
+  font-family: var(--display);
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .now-detail {
-  font-size: 0.92rem;
+  font-size: 0.95rem;
 }
 
 .now-note {
   font-size: 0.8rem;
-  opacity: 0.8;
+  color: var(--muted);
+}
+
+.next-trains {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  font-family: var(--display);
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.next-trains small {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--muted);
 }
 
 .button-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 6px;
 }
 
 .button-row > button {
   flex: 1;
+  height: 46px;
+}
+
+.now-card.getoff button.primary {
+  background: #ffffff;
+  color: var(--accent);
+}
+
+.now-card.getoff button.secondary {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #ffffff;
 }
 
 .stop-picker {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  max-height: 260px;
+  max-height: 280px;
   overflow-y: auto;
-}
-
-.stop-picker button {
-  width: 100%;
-  text-align: left;
-  padding: 11px 14px;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  background: none;
 }
 
 .stop-picker .exit-mark {
   float: right;
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: var(--choice);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-top: 3px;
 }
 
-.warn {
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--warn-bg);
-  color: var(--warn-text);
-  font-size: 0.85rem;
+.progress {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.progress > span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transition: width 0.2s;
 }
