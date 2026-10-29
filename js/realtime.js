@@ -19,7 +19,12 @@ const ALERT_FEEDS = ["camsys%2Fsubway-alerts.json", "camsys%2Fbus-alerts.json"];
 const FEED_REFRESH_MS = 30_000; // the MTA updates trains about this often
 const FEED_STALE_MS = 3 * 60_000; // older predictions aren't trusted
 const ALERT_REFRESH_MS = 5 * 60_000;
-const FETCH_TIMEOUT_MS = 10_000;
+const FETCH_TIMEOUT_MS = 6_000; // underground, requests hang rather than fail
+// Phones often say they're online with no working connection (a tunnel, a
+// station's Wi-Fi sign-in page). Live means data actually arrived recently.
+const CONNECTED_FOR_MS = 75_000;
+const PROBE_EVERY_MS = 25_000;
+const PROBE_FEED = "nyct%2Fgtfs-si"; // the smallest feed, a cheap way to check the connection
 const MODE_KEY = "forkway-live";
 
 const FEED_OF_ROUTE = new Map(
@@ -39,17 +44,37 @@ export class LiveData {
     this.enabled = loadSetting() !== "off";
   }
 
-  // "live": fresh data in hand. "connecting": trying. "offline": no network
-  // (or the MTA isn't answering). "off": the rider chose saved data only.
+  // "live": data arrived in the last minute or so. "connecting": first try
+  // still going. "offline": no network, or nothing came back. "off": the
+  // rider chose saved data only.
   get state() {
     if (!this.enabled) return "off";
-    if (!isOnline()) return "offline";
-    if (Date.now() - this.lastSuccess < FEED_STALE_MS) return "live";
-    return this.lastFailure > this.lastSuccess ? "offline" : "connecting";
+    if (this.connected) return "live";
+    if (isOnline() && !this.lastSuccess && !this.lastFailure) return "connecting";
+    return "offline";
   }
 
+  // Worth trying the network (it may still not work)
   get usable() {
     return this.enabled && isOnline();
+  }
+
+  // Live data is actually arriving: use it
+  get connected() {
+    return (
+      this.usable &&
+      this.lastSuccess > this.lastFailure &&
+      Date.now() - this.lastSuccess < CONNECTED_FOR_MS
+    );
+  }
+
+  // Called every few seconds: checks the connection when nothing else has
+  // lately, so "Live" turns to "Offline" within half a minute of losing it
+  async heartbeat() {
+    if (!this.usable) return false;
+    const latest = Math.max(this.lastSuccess, this.lastFailure);
+    if (Date.now() - latest < PROBE_EVERY_MS) return false;
+    return this.once(PROBE_FEED, () => this.loadTrains(PROBE_FEED));
   }
 
   get updatedAt() {
@@ -105,7 +130,7 @@ export class LiveData {
         ALERT_FEEDS.map(async (feed) => {
           const res = await fetch(FEED_BASE + feed, { cache: "no-store", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return readAlerts(await res.json());
+          return readAlerts(await res.json(), this.stopIndex);
         })
       );
       this.alerts = lists.flat();
@@ -121,7 +146,7 @@ export class LiveData {
 
   freshTrips(routeId) {
     const feed = this.feeds.get(FEED_OF_ROUTE.get(routeId));
-    if (!this.usable || !feed || Date.now() - feed.fetchedAt > FEED_STALE_MS) return null;
+    if (!this.connected || !feed || Date.now() - feed.fetchedAt > FEED_STALE_MS) return null;
     return feed.trips;
   }
 
@@ -151,13 +176,25 @@ export class LiveData {
     return this.freshTrips(routeId)?.get(id)?.stops ?? null;
   }
 
-  // Alerts in effect now for any of these routes, most serious first
-  alertsFor(routeIds, now = new Date()) {
-    const wanted = new Set(routeIds);
+  // Alerts in effect now for these rides, most serious first. A ride is a
+  // route id ("4"), or { route, dir, stops } to match only alerts for that
+  // direction and the stations it passes through ("Downtown 1 skips 125 St"
+  // doesn't matter riding uptown).
+  alertsFor(rides, now = new Date()) {
+    const wanted = rides.map((r) => (typeof r === "string" ? { route: r, dir: null, stops: null } : r));
     const t = now.getTime() / 1000;
     const seen = new Set();
+    const applies = (a) =>
+      a.entities.some((e) =>
+        wanted.some(
+          (r) =>
+            r.route === e.route &&
+            (e.dir === null || r.dir === null || e.dir === r.dir) &&
+            (e.stop === null || !r.stops || r.stops.has(e.stop))
+        )
+      );
     return this.alerts
-      .filter((a) => a.routes.some((r) => wanted.has(r)) && a.periods.some(([s, e]) => s <= t && t <= e))
+      .filter((a) => a.periods.some(([s, e]) => s <= t && t <= e) && applies(a))
       .filter((a) => !seen.has(a.title) && seen.add(a.title))
       .sort((a, b) => a.rank - b.rank);
   }
@@ -170,7 +207,7 @@ export class LiveData {
 // without live data (buses, or no signal) keep their schedule estimates.
 // onBoard: the first ride is a train you're already on, with this id
 export function withLiveTimes(trip, live, onBoard = null) {
-  if (!live?.usable) return trip;
+  if (!live?.connected) return trip;
   let shift = 0;
   let changed = false;
   const legs = trip.legs.map((original, index) => {
@@ -221,7 +258,7 @@ function moveLeg(leg, ms) {
 
 // Live times for every option in a planner result, re-ranked to match
 export function liveResults(trips, live) {
-  if (!live?.usable) return trips;
+  if (!live?.connected) return trips;
   const updated = trips.map((option) => {
     const choices = option.choices.map((c) => {
       const timed = withLiveTimes(c, live);
@@ -250,7 +287,7 @@ export function routesOf(trips) {
 
 const ALERT_RANK = [/suspend/i, /no .*service|cancel/i, /delay/i, /reduced|skip|express|local|reroute|detour/i];
 
-function readAlerts(json) {
+function readAlerts(json, stopIndex) {
   const alerts = [];
   for (const entity of json.entity ?? []) {
     const a = entity.alert;
@@ -264,7 +301,15 @@ function readAlerts(json) {
       text: english(a.description_text),
       type,
       rank: rank < 0 ? ALERT_RANK.length : rank,
-      routes: [...new Set((a.informed_entity ?? []).map((e) => e.route_id).filter(Boolean))],
+      // What it's about: a line, maybe one direction, maybe one station.
+      // Subway alerts name stations ("112"); bus alerts cover whole routes.
+      entities: (a.informed_entity ?? [])
+        .filter((e) => e.route_id)
+        .map((e) => ({
+          route: e.route_id,
+          dir: e.direction_id ?? null,
+          stop: e.stop_id ? (stopIndex.get(`S:${e.stop_id}`) ?? null) : null,
+        })),
       periods: (a.active_period ?? []).map((p) => [p.start ?? 0, p.end ?? Infinity]),
     });
   }

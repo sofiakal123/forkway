@@ -1,57 +1,63 @@
 // The trip map: a quiet base map (OpenFreeMap data, styled here to show only
 // land, water, parks, streets and a few names) with the trip drawn on top
-// from the app's own transit data, so the route always shows, even offline
-// with no map saved.
+// from the app's own transit data, so the route always shows, even with no
+// base map.
+//
+// The base map uses the same detail online and offline (zoom 13 data,
+// enlarged when you zoom in), so losing signal never rebuilds the map, and
+// the saved NYC map covers everything.
 
 const TILEJSON = "https://tiles.openfreemap.org/planet";
 const GLYPHS = "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf";
+const TILES_KEY = "forkway-map-tiles"; // last known tile address, to start without the network
 const NYC = [-73.95, 40.73];
 const REGULAR = ["Noto Sans Regular"];
 const BOLD = ["Noto Sans Bold"];
 const ITALIC = ["Noto Sans Italic"];
-// Offline, saved map detail stops at this zoom; closer in, it's enlarged
-const OFFLINE_DETAIL_ZOOM = 13;
-const ONLINE_DETAIL_ZOOM = 14;
+const DETAIL_ZOOM = 13;
+const TILEJSON_TIMEOUT_MS = 5000;
+const MISSING_AFTER_ERRORS = 3; // base map pieces failing before we say so
 
 const PALETTES = {
   light: {
-    land: "#f4f3ef",
-    park: "#e6ece0",
-    water: "#d8e2ea",
+    land: "#f4f4f1",
+    park: "#e2ecdc",
+    water: "#cfe2f4",
     road: "#ffffff",
-    casing: "#e7e4dd",
-    motorway: "#fdfcf9",
-    label: "#8b8c88",
-    faint: "#a9aaa5",
-    waterLabel: "#8ea3b4",
+    casing: "#e6e5e0",
+    motorway: "#ffffff",
+    label: "#8a8c8f",
+    faint: "#a7aaae",
+    waterLabel: "#7c9cbb",
     casingTrip: "#ffffff",
-    walk: "#8b8c88",
-    ink: "#191b1b",
-    accent: "#2e7cf6",
+    walk: "#7d8187",
+    ink: "#111213",
+    accent: "#2f74e6",
   },
   dark: {
-    land: "#161717",
-    park: "#1a201a",
-    water: "#1b232a",
-    road: "#2a2c2c",
-    casing: "#1f2121",
-    motorway: "#323434",
-    label: "#7d807f",
-    faint: "#5f6261",
-    waterLabel: "#53687a",
-    casingTrip: "#161717",
-    walk: "#9a9d9c",
-    ink: "#ecebe7",
-    accent: "#6aa8ff",
+    land: "#141516",
+    park: "#18201a",
+    water: "#16222e",
+    road: "#26282a",
+    casing: "#1c1e20",
+    motorway: "#2e3033",
+    label: "#7d8084",
+    faint: "#5d6064",
+    waterLabel: "#4f6a84",
+    casingTrip: "#141516",
+    walk: "#9a9ea3",
+    ink: "#efefec",
+    accent: "#6ea6ff",
   },
 };
 
 export class TripMap {
-  constructor(element, { offline = false } = {}) {
-    this.offline = offline;
+  constructor(element) {
+    this.element = element;
     this.scheme = matchMedia("(prefers-color-scheme: dark)");
-    this.tiles = null; // base map tile URLs, once known
+    this.tiles = loadTiles(); // base map tile addresses, once known
     this.data = { trip: collection([]), you: collection([]) };
+    this.baseErrors = 0;
 
     this.map = new maplibregl.Map({
       container: element,
@@ -61,6 +67,7 @@ export class TripMap {
       attributionControl: false,
       dragRotate: false,
       pitchWithRotate: false,
+      fadeDuration: 0,
     });
     this.map.touchZoomRotate.disableRotation();
     this.map.addControl(
@@ -69,31 +76,63 @@ export class TripMap {
         customAttribution: '<a href="https://openfreemap.org">OpenFreeMap</a> © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       })
     );
+
+    // "No map here" note for when the base map can't load (offline, not saved)
+    this.notice = document.createElement("div");
+    this.notice.className = "map-notice";
+    this.notice.textContent = "Map not saved for offline use · your route still shows";
+    this.notice.hidden = Boolean(this.tiles); // no base map at all until it's been online once
+    element.append(this.notice);
+
     // A new style starts empty: put the trip back on it
     this.map.on("style.load", () => this.pushData());
+    this.map.on("error", (event) => {
+      if (event.sourceId !== "base") return;
+      if (++this.baseErrors >= MISSING_AFTER_ERRORS) this.notice.hidden = false;
+    });
+    this.map.on("sourcedata", (event) => {
+      if (event.sourceId === "base" && event.tile && event.isSourceLoaded) {
+        this.baseErrors = 0;
+        this.notice.hidden = true;
+      }
+    });
+    // Phones can drop the map's drawing surface when the app is in the
+    // background, and the container can change size: keep it drawn
+    new ResizeObserver(() => this.map.resize()).observe(element);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") this.redraw();
+    });
+    this.map.on("webglcontextrestored", () => this.redraw());
     this.scheme.addEventListener("change", () => this.restyle());
-    this.loadBaseMap();
+    this.refreshTileAddress();
   }
 
-  async loadBaseMap() {
+  // The tile address changes when OpenFreeMap publishes new map data. Use the
+  // last known one right away, and quietly pick up a new one when online.
+  async refreshTileAddress() {
     try {
-      // The service worker answers from its copy when offline
-      const tilejson = await (await fetch(TILEJSON)).json();
-      this.tiles = tilejson.tiles;
-      this.restyle();
+      const res = await fetch(TILEJSON, { signal: AbortSignal.timeout(TILEJSON_TIMEOUT_MS) });
+      const tiles = (await res.json()).tiles;
+      if (!tiles?.length || tiles[0] === this.tiles?.[0]) return;
+      const first = !this.tiles;
+      this.tiles = tiles;
+      this.notice.hidden = true;
+      saveTiles(tiles);
+      const source = this.map.getSource("base");
+      if (source?.setTiles) source.setTiles(tiles);
+      else if (first) this.restyle();
     } catch {
-      // No base map yet (offline and never online): the trip still draws
+      // Offline: the saved address (if any) keeps working with saved tiles
     }
-  }
-
-  setOffline(offline) {
-    if (offline === this.offline) return;
-    this.offline = offline;
-    this.restyle();
   }
 
   restyle() {
     this.map.setStyle(this.style(), { diff: false });
+  }
+
+  redraw() {
+    this.map.resize();
+    this.map.triggerRepaint();
   }
 
   style() {
@@ -102,13 +141,7 @@ export class TripMap {
       trip: { type: "geojson", data: this.data.trip },
       you: { type: "geojson", data: this.data.you },
     };
-    if (this.tiles) {
-      sources.base = {
-        type: "vector",
-        tiles: this.tiles,
-        maxzoom: this.offline ? OFFLINE_DETAIL_ZOOM : ONLINE_DETAIL_ZOOM,
-      };
-    }
+    if (this.tiles) sources.base = { type: "vector", tiles: this.tiles, maxzoom: DETAIL_ZOOM };
     return {
       version: 8,
       glyphs: GLYPHS,
@@ -417,4 +450,20 @@ function circlePolygon(lon, lat, meters, sides = 40) {
     ring.push([lon + dLon * Math.cos(a), lat + dLat * Math.sin(a)]);
   }
   return { type: "Polygon", coordinates: [ring] };
+}
+
+function loadTiles() {
+  try {
+    return JSON.parse(localStorage.getItem(TILES_KEY)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function saveTiles(tiles) {
+  try {
+    localStorage.setItem(TILES_KEY, JSON.stringify(tiles));
+  } catch {
+    // Not saved: next start fetches the address again
+  }
 }

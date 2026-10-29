@@ -5,20 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Forkway</title>
   <meta name="description" content="NYC transit directions that show every place you could switch lines, while you ride.">
-  <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#111212" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#c6def4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d1726" media="(prefers-color-scheme: dark)">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png" type="image/png">
   <link rel="preload" href="fonts/bricolage-grotesque.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/geist-mono.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+  <div class="sky" aria-hidden="true"></div>
+
   <header class="topbar">
     <button class="icon-button" id="back" aria-label="Back" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
     </button>
-    <span class="brand" id="title">forkway</span>
+    <span class="brand" id="title">Forkway</span>
+    <span class="clock" id="clock" aria-hidden="true"></span>
     <button class="data-pill" id="data-pill" type="button" aria-live="polite">
       <span class="data-dot" aria-hidden="true"></span>
       <span id="data-label">Saved data</span>
@@ -29,10 +33,14 @@
 
   <!-- Plan a trip -->
   <main class="view" id="plan-view">
-    <h1 class="headline">Where to?</h1>
+    <section class="hero">
+      <div class="grid-lines" aria-hidden="true"><i></i><i></i><i></i><b></b><b></b><b></b></div>
+      <p class="kicker">Thinking in forks.<br>Every place to switch, while you ride.</p>
+      <h1 class="headline">Where<br>to?</h1>
+    </section>
 
     <form class="planner" id="plan-form" autocomplete="off">
-      <div class="places">
+      <div class="widget places">
         <div class="place-field">
           <span class="marker from" aria-hidden="true"></span>
           <label class="sr-only" for="from-input">From</label>
@@ -47,14 +55,27 @@
           <input id="to-input" placeholder="Search a stop, street or place" enterkeyhint="search">
         </div>
       </div>
-      <ul class="suggestions" id="suggestions" role="listbox" hidden></ul>
-      <div class="when">
-        <select id="when-mode" aria-label="When">
-          <option value="now">Leave now</option>
-          <option value="at">Leave at…</option>
-        </select>
-        <input type="datetime-local" id="when-time" aria-label="Departure time" hidden>
+      <ul class="widget suggestions" id="suggestions" role="listbox" hidden></ul>
+
+      <div class="widget-row">
+        <label class="widget time-widget">
+          <span class="widget-label accent" id="when-day">TODAY</span>
+          <span class="widget-big" id="when-clock">–</span>
+          <span class="widget-small">
+            <select id="when-mode" aria-label="When">
+              <option value="now">Leave now</option>
+              <option value="at">Leave at…</option>
+            </select>
+          </span>
+        </label>
+        <button type="button" class="widget status-widget" id="status-widget" aria-label="Live data: tap to switch">
+          <span class="widget-label">MTA data</span>
+          <span class="widget-big"><span class="data-dot" aria-hidden="true"></span><span id="status-big">–</span></span>
+          <span class="widget-small" id="status-small"></span>
+        </button>
       </div>
+      <input type="datetime-local" class="widget when-time" id="when-time" aria-label="Departure time" hidden>
+
       <button class="primary wide" id="plan-button" type="submit" disabled>Loading NYC transit…</button>
     </form>
 
@@ -63,14 +84,16 @@
 
     <section class="block" id="recents" hidden>
       <h2 class="label">Recent</h2>
-      <ul class="list" id="recent-list"></ul>
+      <div class="place-tiles" id="recent-list"></div>
     </section>
 
-    <section class="block" aria-label="Data">
-      <h2 class="label">Data</h2>
-      <div class="list data-panel" id="data-panel"></div>
+    <section class="block" aria-label="Offline data">
+      <h2 class="label">Offline</h2>
+      <div class="widget list" id="data-panel"></div>
       <p class="fine" id="footnote"></p>
     </section>
+
+    <footer class="statusline" id="statusline"></footer>
   </main>
 
   <!-- A trip: preview, then live -->

@@ -17,7 +17,7 @@ const ALIGHT_TIME = { bus: 0, subway: 60 }; // seconds to get out of a station
 const MAX_COST = 4 * 3600;
 const EXIT_SLACK = 12 * 60; // show exits up to this much slower than the best one
 const MAX_EXITS = 6;
-const MAX_TRIPS = 6;
+const MAX_TRIPS = 7;
 const TRIP_SLACK = 30 * 60; // show trips up to this much slower than the best
 
 const DEST = -1;
@@ -147,8 +147,10 @@ function walkLeg(from, to, start) {
 // (or already on board there at `start`, so with no wait)
 function rideLeg(net, p, i, j, start, onBoard = false) {
   const pattern = net.patterns[p];
-  const wait = onBoard ? 0 : net.waitSeconds(p, i, start);
+  // The search plans with typical waits; a trip catches the actual next one
+  const wait = onBoard ? 0 : net.nextDepartureWait(p, i, start);
   if (!Number.isFinite(wait)) return null;
+  const typical = net.waitSeconds(p, i, start);
   const board = addSeconds(start, wait);
   const arrive = addSeconds(board, pattern.cum[j] - pattern.cum[i]);
   return {
@@ -161,11 +163,34 @@ function rideLeg(net, p, i, j, start, onBoard = false) {
     fromStop: stopPoint(net, pattern.stops[i]),
     toStop: stopPoint(net, pattern.stops[j]),
     wait,
+    headway: Number.isFinite(typical) ? Math.max(1, Math.round((typical * 2) / 60)) : null, // minutes between vehicles
     start,
     board,
     arrive,
     end: addSeconds(arrive, ALIGHT_TIME[pattern.mode]),
   };
+}
+
+// The same steps, re-timed from `start`: walks take as long as before, and
+// each ride catches the next scheduled departure after you reach its stop
+// (so getting somewhere early can mean an earlier bus)
+export function retimeLegs(net, legs, start) {
+  let t = start;
+  return legs.map((leg) => {
+    let timed;
+    if (leg.kind === "walk") {
+      timed = { ...leg, start: t, end: addSeconds(t, leg.seconds) };
+    } else {
+      timed = rideLeg(net, leg.pattern, leg.from, leg.to, t);
+      if (!timed) {
+        const shift = t - leg.start;
+        timed = { ...leg };
+        for (const key of ["start", "board", "arrive", "end"]) timed[key] = new Date(leg[key].getTime() + shift);
+      }
+    }
+    t = timed.end;
+    return timed;
+  });
 }
 
 export function stopPoint(net, s) {
@@ -275,7 +300,7 @@ export function planTrips(net, origin, dest, time) {
     for (const [p, i] of net.stopPatterns[o]) {
       const pattern = net.patterns[p];
       if (i >= pattern.stops.length - 1) continue;
-      const wait = net.waitSeconds(p, i, atStop);
+      const wait = net.nextDepartureWait(p, i, atStop);
       if (!Number.isFinite(wait)) continue;
 
       // Quick estimate: best exit on this pattern
@@ -298,7 +323,7 @@ export function planTrips(net, origin, dest, time) {
     const walk = walkLeg({ name: "Start", lat: origin.lat, lon: origin.lon }, stopPoint(net, g.o), time);
     const legsBefore = walk.meters > 15 ? [walk] : [];
     const atStop = legsBefore.length ? walk.end : time;
-    const choices = exitChoices(search, g.p, g.i, atStop, legsBefore, time, net.waitSeconds(g.p, g.i, atStop));
+    const choices = exitChoices(search, g.p, g.i, atStop, legsBefore, time, net.nextDepartureWait(g.p, g.i, atStop));
     if (choices.length === 0) continue;
     const best = choices.reduce((a, b) => (b.arrive < a.arrive ? b : a));
     trips.push({ first: { pattern: g.p, route: net.routeOf(g.p) }, choices, best, arrive: best.arrive });
@@ -314,7 +339,73 @@ export function planTrips(net, origin, dest, time) {
   trips.sort((a, b) => a.arrive - b.arrive);
   if (trips.length === 0) return { trips: [], search };
   const cutoff = trips[0].arrive.getTime() + TRIP_SLACK * 1000;
-  return { trips: trips.filter((t) => t.arrive.getTime() <= cutoff).slice(0, MAX_TRIPS), search };
+  const worthShowing = withoutDominated(net, trips.filter((t) => t.arrive.getTime() <= cutoff));
+  return { trips: worthShowing.slice(0, MAX_TRIPS), search };
+}
+
+// Drop options that only add noise: an extra ride that saves no time (like
+// "ride a bus two blocks to the subway" when walking there is as quick), or
+// the same lines again arriving no sooner (the 6 and the 6 express).
+// Different lines stay, even when a little slower: they're real alternatives.
+const SAME_ARRIVAL = 60 * 1000;
+const WALK_WORTH_A_RIDE = 4 * 60;
+function withoutDominated(net, trips) {
+  const measure = (t) => {
+    const rides = t.best.legs.filter((l) => l.kind === "ride");
+    const lineList = rides.map((l) => (l.route.mode === "subway" ? l.route.name.replace(/X$/, "") : l.route.name));
+    return {
+      arrive: t.arrive.getTime(),
+      rides: rides.length,
+      lineList,
+      lines: lineList.join(">"),
+      walk: t.best.legs.reduce((sum, l) => sum + (l.kind === "walk" ? l.seconds : 0), 0),
+    };
+  };
+  // b's lines all appear in a, in order: a is b plus extra rides
+  const plusExtraRides = (a, b) => {
+    let k = 0;
+    for (const line of a.lineList) if (line === b.lineList[k]) k++;
+    return k === b.lineList.length && a.rides > b.rides;
+  };
+  const measured = trips.map(measure);
+  return trips.filter((trip, k) => {
+    if (trip.best.legs.some(walkableRide) || doublesBack(net, trip.best.legs)) return false;
+    const a = measured[k];
+    return !measured.some((b, n) => {
+      if (n === k) return false;
+      const pointlessRide = plusExtraRides(a, b) && b.arrive <= a.arrive + SAME_ARRIVAL && b.walk <= a.walk + WALK_WORTH_A_RIDE;
+      const repeat = b.lines === a.lines && (b.arrive < a.arrive || (b.arrive === a.arrive && n < k));
+      return pointlessRide || repeat;
+    });
+  });
+}
+
+// A trip that comes back to (or right next to) a stop it already left, like
+// riding one stop away and straight back to change lines
+const SAME_PLACE_METERS = 250; // big stations span a couple of blocks
+function doublesBack(net, legs) {
+  // Places already passed: where the trip starts, then every stop ridden through
+  const visited = legs[0]?.kind === "walk" ? [legs[0].from] : [];
+  for (const leg of legs) {
+    if (leg.kind !== "ride") continue;
+    const stops = net.patterns[leg.pattern].stops;
+    const path = [];
+    for (let i = leg.from; i <= leg.to; i++) path.push(stopPoint(net, stops[i]));
+    // Any stop after boarding that we've already been to (or are right next to)
+    for (const p of path.slice(1)) {
+      if (visited.some((v) => distance(v.lat, v.lon, p.lat, p.lon) <= SAME_PLACE_METERS)) return true;
+    }
+    visited.push(...path.slice(0, -1));
+  }
+  return false;
+}
+
+// A ride you could walk in about the same time as waiting for it and riding
+const WALKABLE_MARGIN = 3 * 60;
+function walkableRide(leg) {
+  if (leg.kind !== "ride") return false;
+  const walk = walkSeconds(distance(leg.fromStop.lat, leg.fromStop.lon, leg.toStop.lat, leg.toStop.lon));
+  return walk <= (leg.end - leg.start) / 1000 + WALKABLE_MARGIN;
 }
 
 // While riding pattern p, now at stop position i: every place you could get

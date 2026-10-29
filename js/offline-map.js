@@ -27,7 +27,13 @@ export async function saveNycMap(onProgress = () => {}) {
   const index = await fetch(TILEJSON, { cache: "no-store" });
   if (!index.ok) throw new Error(`Map index: HTTP ${index.status}`);
   await cache.put(TILEJSON, index.clone());
-  const template = (await index.json()).tiles[0];
+  const tiles = (await index.json()).tiles;
+  const template = tiles[0];
+  try {
+    localStorage.setItem("forkway-map-tiles", JSON.stringify(tiles)); // so the map can start with no signal (see map.js)
+  } catch {
+    // The map fetches the address itself next time it's online
+  }
 
   const jobs = [];
   for (const z of ZOOMS) {

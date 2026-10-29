@@ -3,8 +3,9 @@
 // never cached: it's either fresh or not used.
 // Bump VERSION whenever app files or data change, so phones pick them up.
 
-const VERSION = "forkway-v3";
+const VERSION = "forkway-v4";
 const NETWORK_TIMEOUT_MS = 4000; // past this, answer from the saved copy
+const MAP_TIMEOUT_MS = 8000; // a map piece that takes longer is treated as missing
 const MAP_CACHE = "forkway-map"; // map tiles, fonts and the map's index
 const MAX_CLOSE_TILES = 800; // street-level tiles kept from browsing (saved NYC map tiles are never dropped)
 const SAVED_MAP_ZOOM = 13; // the "Save NYC map" download covers zooms up to this
@@ -14,6 +15,7 @@ const APP_FILES = [
   "index.html",
   "css/app.css",
   "fonts/bricolage-grotesque.woff2",
+  "fonts/geist-mono.woff2",
   "js/app.js",
   "js/network.js",
   "js/router.js",
@@ -90,7 +92,7 @@ function withTimeout(promise, ms) {
 async function networkFirst(request) {
   const cache = await caches.open(MAP_CACHE);
   try {
-    const response = await fetch(request);
+    const response = await withTimeout(fetch(request), NETWORK_TIMEOUT_MS);
     if (response.ok) await cache.put(request, response.clone());
     return response;
   } catch {
@@ -107,7 +109,7 @@ async function mapFile(request, url) {
   const cached = await cache.match(key);
   if (cached) return cached;
   try {
-    const response = await fetch(request);
+    const response = await withTimeout(fetch(request), MAP_TIMEOUT_MS);
     if (response.ok) {
       await cache.put(key, response.clone());
       trimCloseTiles(cache);

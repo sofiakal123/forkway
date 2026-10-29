@@ -24,7 +24,7 @@ Tap any option to see the whole trip on the map. Switch options while you ride a
 | Map | Full detail | The saved NYC map (tap **Save** under Data first) |
 | Searching addresses | Stops, stations and addresses | Stops and stations |
 
-The pill in the top corner shows which one you're on: **Live**, **Offline**, or **Saved data**. Tap it to switch to saved data on purpose, for example to save mobile data. It switches back to live data automatically when signal returns, unless you turned live data off.
+The pill in the top corner shows which one you're on: **Live**, **Offline**, or **Saved data**. "Live" means data actually arrived in the last minute or so: underground, phones often still say they're online when nothing gets through, so Forkway checks the connection itself every 25 seconds and switches to Offline within about half a minute of losing it. Tap the pill (or the MTA data widget) to switch to saved data on purpose, for example to save mobile data.
 
 Every trip also has **Compare in Google Maps / Citymapper** links that open the same trip in those apps. Their data can't be pulled into Forkway: Citymapper has no public API, and Google's transit directions need a paid key and can't be shown outside Google's own map.
 
@@ -64,11 +64,12 @@ Then open http://localhost:3000. Location works on `localhost`; on a phone the a
 | --- | --- | --- |
 | Transit data | `tools/build-data.mjs` downloads the MTA's official schedule feeds (subway plus all five boroughs' buses) and condenses ~60 MB of timetables into a 1.5 MB file (0.4 MB compressed): each route's stop patterns, typical travel times between stops, and how many trips leave each hour on a weekday, Saturday and Sunday | `tools/build-data.mjs` → `data/transit.json` |
 | Planning | One search runs **backward from the destination** (Dijkstra's algorithm over stops and "on board this vehicle at this stop" positions). That gives, for every stop in the city, the fastest way to finish the trip from there. Listing a vehicle's exit choices is then just reading that answer at each of its upcoming stops. Choices that continue the same way are merged | `js/router.js` |
-| Waits | Offline, expected wait is half the time between vehicles at that hour, adjusted for how long the vehicle takes to reach your stop | `js/network.js` |
+| Timetables | Every scheduled departure of every line is saved (as minutes after midnight). Trips catch the actual next departure at each stop; the search itself uses typical waits | `js/network.js` |
+| Choosing options | One option per first line, then noise is removed: rides you could just as well walk, options that loop back, the same lines again but later, and another option plus a pointless extra hop. Different lines stay even when a little slower | `js/router.js` |
 | Live data | Reads the MTA's subway feeds (GTFS-realtime, decoded by a small protobuf reader) and alert feeds straight from the phone; no key or server needed. Each subway ride in a plan is matched to the next real train, and the rest of the trip shifts to match | `js/realtime.js` |
-| Live trip | Live train position when online, GPS when there's a fix, the schedule otherwise. Exit choices are recomputed every few seconds from where you are | `js/live.js` |
+| Live trip | Live train position when online, GPS when there's a fix, the schedule otherwise. Every few seconds the rest of the trip is re-timed from when the current step should really end, so running ahead can mean an earlier bus (and you're told). Each step shows how long it should take | `js/live.js` |
 | Search | Offline name search over stops and stations ("W181st" → "W 181 St"), plus OpenStreetMap Nominatim for addresses | `js/search.js` |
-| Map | MapLibre with OpenFreeMap's map data, restyled to show only land, water, parks, streets and a few names. The trip is drawn from Forkway's own data, so it shows even with no map saved | `js/map.js` |
+| Map | MapLibre with OpenFreeMap's map data, restyled to show only land, water, parks, streets and a few names. The same detail is used online and offline, so losing signal never rebuilds the map. The trip is drawn from Forkway's own data, so it shows even with no map saved | `js/map.js` |
 | Offline | A service worker caches the app and transit data, and the map you've viewed. **Save NYC map** downloads all five boroughs (about 300 map tiles) | `sw.js`, `js/offline-map.js` |
 
 Planning a trip takes about 40-80 ms on a laptop.
@@ -81,7 +82,7 @@ The MTA updates its schedules a few times a year. To refresh:
 node tools/build-data.mjs --refresh
 ```
 
-Then change `VERSION` in `sw.js` (for example to `forkway-v4`) so installed copies pick up the new data, and push to GitHub.
+Then change `VERSION` in `sw.js` (for example to `forkway-v5`) so installed copies pick up the new data, and push to GitHub.
 
 ## Tests
 
@@ -90,17 +91,20 @@ node tools/test-router.mjs     # the 4 train to W 181 St example
 node tools/test-live.mjs       # simulates riding the 4, switching exits along the way
 node tools/test-more.mjs       # other trips across boroughs, including late night
 node tools/test-realtime.mjs   # live MTA data: next real trains, alerts, the example with live times (needs internet)
+node tools/test-retime.mjs     # running ahead or behind moves you to an earlier or later Bx11
+node tools/test-audit.mjs 8.5  # ten everyday trips at 8:30 am (any hour works), every option printed
 ```
 
 ## Limits
 
 - **Live times are for the subway only.** The MTA's live bus feed doesn't allow access from a browser, so buses use timetable estimates. Live bus times would need a small server and a free MTA Bus Time key.
 - The live train feed covers trains already scheduled to run soon, so live times apply to trips leaving within about 20 minutes. Later trips use the timetable.
-- Offline, holiday schedules, planned service changes and outages aren't reflected. Online, service alerts are shown but the planner doesn't route around them.
+- Offline, holiday schedules, planned service changes and outages aren't reflected. Online, service alerts for your lines, direction and stations are shown, but the planner doesn't route around them.
+- Ride times between stops are typical daytime times; at night and at rush hour real trips can be a bit faster or slower.
 - Subway, local, Select Bus and express buses are included. The Staten Island Ferry, PATH, LIRR and Metro-North aren't.
 - Walking distances are estimated from straight-line distance, not actual streets.
-- The saved map has street-level detail up to zoom 13 and is enlarged beyond that, so tiny streets' names may be missing offline.
+- The map shows every street but only the bigger street names (it uses zoom-13 map data everywhere, so it looks the same with and without signal).
 
 ## Tech
 
-Vanilla JavaScript (ES modules), MapLibre GL 4.7.1, OpenFreeMap and OpenStreetMap, MTA GTFS and GTFS-realtime data, Bricolage Grotesque (bundled, SIL Open Font License). No build step and no dependencies to install. The data and icon scripts use only Node's standard library.
+Vanilla JavaScript (ES modules), MapLibre GL 4.7.1, OpenFreeMap and OpenStreetMap, MTA GTFS and GTFS-realtime data, Bricolage Grotesque and Geist Mono (bundled, SIL Open Font License). No build step and no dependencies to install. The data and icon scripts use only Node's standard library.

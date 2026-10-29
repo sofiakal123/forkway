@@ -3,8 +3,8 @@
 // MTA's live train predictions when there's signal (subway), GPS when there
 // is a fix (elevated lines, buses), the schedule when there's neither
 // (underground), and from the rider tapping "I'm here" at any time.
-import { distance } from "./network.js";
-import { exitChoicesWhileRiding, searchToDestination } from "./router.js";
+import { distance, walkSeconds } from "./network.js";
+import { exitChoicesWhileRiding, retimeLegs, searchToDestination } from "./router.js";
 import { withLiveTimes } from "./realtime.js";
 
 const AT_STOP_METERS = 70; // close enough to count as at a stop
@@ -13,10 +13,11 @@ const LOOK_AHEAD_STOPS = 15; // how far ahead a GPS fix may move you
 const SEARCH_REFRESH_MS = 5 * 60_000; // re-plan the rest of the trip this often
 const MIN_ACCURACY_METERS = 120; // ignore fixes vaguer than this
 const BOARD_MATCH_MS = 4 * 60_000; // a live train this close to "I'm on board" is the one
+const NOTABLE_CHANGE_MS = 2 * 60_000; // tell the rider when a connection moves this much
 
 export class TripTracker {
   // live: a LiveData, or null to use the schedule only
-  constructor(net, trip, dest, live = null) {
+  constructor(net, trip, dest, live = null, now = new Date()) {
     this.net = net;
     this.dest = dest;
     this.live = live;
@@ -25,6 +26,7 @@ export class TripTracker {
     this.expected = null; // the live train we're waiting for
     this.liveAt = 0; // when live data last placed us
     this.legIndex = 0;
+    this.legStartedAt = now; // when the current step began
     this.anchor = null; // while riding: { position, time } we're sure of
     this.boarded = false;
     this.alerted = new Set();
@@ -39,8 +41,8 @@ export class TripTracker {
 
   // --- Things the rider tells us -------------------------------------------
 
-  arrivedAtStop() {
-    this.nextLeg();
+  arrivedAtStop(now = new Date()) {
+    this.nextLeg(now);
   }
 
   boardedNow(now = new Date()) {
@@ -58,8 +60,8 @@ export class TripTracker {
     this.anchor = { position, time: now };
   }
 
-  gotOff() {
-    this.nextLeg();
+  gotOff(now = new Date()) {
+    this.nextLeg(now);
   }
 
   // Switch to another exit choice (a trip from the current position)
@@ -75,8 +77,9 @@ export class TripTracker {
     this.alerted.clear();
   }
 
-  nextLeg() {
+  nextLeg(now = new Date()) {
     this.legIndex++;
+    this.legStartedAt = now;
     this.boarded = false;
     this.boardedByEstimate = false;
     this.anchor = null;
@@ -89,7 +92,7 @@ export class TripTracker {
 
   liveRide() {
     const leg = this.leg;
-    return Boolean(this.live?.usable && leg?.kind === "ride" && leg.route.mode === "subway");
+    return Boolean(this.live?.connected && leg?.kind === "ride" && leg.route.mode === "subway");
   }
 
   // The live train leaving our stop closest to `time`, if any
@@ -165,7 +168,7 @@ export class TripTracker {
     if (!leg) return;
 
     if (leg.kind === "walk") {
-      if (distance(fix.lat, fix.lon, leg.to.lat, leg.to.lon) <= AT_STOP_METERS + fix.accuracy / 2) this.nextLeg();
+      if (distance(fix.lat, fix.lon, leg.to.lat, leg.to.lon) <= AT_STOP_METERS + fix.accuracy / 2) this.nextLeg(now);
       return;
     }
 
@@ -212,13 +215,26 @@ export class TripTracker {
       const toGo = this.lastFix
         ? distance(this.lastFix.lat, this.lastFix.lon, leg.to.lat, leg.to.lon)
         : null;
+      // When this walk should end: from GPS if we have it, else from when it began
+      const seconds = toGo != null ? walkSeconds(toGo) : Math.max(0, leg.seconds - (now - this.legStartedAt) / 1000);
+      leg.end = new Date(now.getTime() + Math.max(seconds, 15) * 1000);
+      const change = this.retime(now, leg.end);
       return {
         phase: "walk",
         leg,
         final: this.legIndex === this.legs.length - 1,
         metersLeft: toGo,
+        stepEnd: leg.end,
+        change,
         alert: null,
       };
+    }
+
+    // Waiting: the next scheduled vehicle after we reached the stop (the
+    // live data below may correct it)
+    if (!this.boarded && !leg.live) {
+      const [timed] = retimeLegs(this.net, [leg], new Date(Math.min(this.legStartedAt, now)));
+      Object.assign(leg, { wait: timed.wait, board: timed.board, arrive: timed.arrive, end: timed.end });
     }
 
     const upcoming = this.syncLive(now);
@@ -235,11 +251,21 @@ export class TripTracker {
     const confirmed = Boolean(this.anchor) && !this.boardedByEstimate;
     const liveNow = this.liveRide() && now.getTime() - this.liveAt < 90_000;
 
+    // On board without a live train: arrival at the exit from where we are
+    if (this.boarded && !(liveNow && leg.live)) {
+      const anchor = this.anchor ?? { position: leg.from, time: leg.board };
+      const ahead = Math.max(0, pattern.cum[leg.to] - pattern.cum[Math.min(anchor.position, leg.to)]);
+      const alight = leg.end - leg.arrive;
+      leg.arrive = new Date(Math.max(now.getTime(), anchor.time.getTime() + ahead * 1000));
+      leg.end = new Date(leg.arrive.getTime() + alight);
+    }
+    const change = this.retime(now, leg.end);
+
     // Fresh exit choices from where we are (or from the stop, once the vehicle comes)
     this.refreshSearch(now);
     const from = this.boarded ? now : new Date(Math.max(now, leg.board));
     let choices = exitChoicesWhileRiding(this.search, leg.pattern, position, from);
-    if (this.live?.usable) {
+    if (this.live?.connected) {
       const onBoard = this.boarded ? this.train : null;
       choices = choices.map((c) => ({ ...withLiveTimes(c, this.live, onBoard), exit: c.exit }));
       const fastest = Math.min(...choices.map((c) => c.arrive.getTime()));
@@ -268,10 +294,30 @@ export class TripTracker {
       stopsLeft,
       choices,
       chosenExit: leg.to,
+      stepEnd: this.boarded ? leg.arrive : leg.board,
+      change,
       waitMinutes: Math.max(0, Math.round((leg.board - now) / 60000)),
       headwayMinutes: leg.headway ?? Math.round((leg.wait * 2) / 60),
       alert,
     };
+  }
+
+  // Re-time every step after the current one from when it should now end:
+  // ahead of plan can mean an earlier bus, behind can mean a later one.
+  // Returns { route, board, earlier } when the next connection moves notably.
+  retime(now, stepEnd) {
+    const rest = this.legs.slice(this.legIndex + 1);
+    if (rest.length === 0) return null;
+    const before = rest.find((l) => l.kind === "ride");
+    let timed = retimeLegs(this.net, rest, stepEnd);
+    if (this.live?.connected) timed = withLiveTimes({ legs: timed, depart: now }, this.live).legs;
+    this.legs.splice(this.legIndex + 1, rest.length, ...timed);
+
+    const after = timed.find((l) => l.kind === "ride");
+    if (!before || !after || before.route !== after.route) return null;
+    const moved = after.board - before.board;
+    if (Math.abs(moved) < NOTABLE_CHANGE_MS) return null;
+    return { route: after.route, board: after.board, earlier: moved < 0 };
   }
 
   refreshSearch(now) {

@@ -333,11 +333,22 @@ async function build() {
     const offsets = pattern.stops.map((_, i) => median(sample.map((t) => t.offsets[i])));
     const gaps = offsets.map((o, i) => (i === 0 ? 0 : Math.max(0, Math.round(o - offsets[i - 1]))));
 
+    // Trips per hour (for typical waits) and each trip's departure from the
+    // first stop, in minutes after midnight, stored as gaps: [first, +gap, ...]
     const perHour = {};
+    const departures = {};
     for (const [bit, type] of Object.keys(DAY_TYPES).entries()) {
       const counts = new Array(24).fill(0);
-      for (const t of pattern.trips) if (t.days & (1 << bit)) counts[Math.floor(t.start / 3600) % 24]++;
-      if (counts.some(Boolean)) perHour[type] = counts;
+      const starts = [];
+      for (const t of pattern.trips) {
+        if (!(t.days & (1 << bit))) continue;
+        counts[Math.floor(t.start / 3600) % 24]++;
+        starts.push(Math.round(t.start / 60));
+      }
+      if (!counts.some(Boolean)) continue;
+      perHour[type] = counts;
+      starts.sort((a, b) => a - b);
+      departures[type] = starts.map((m, k) => (k === 0 ? m : m - starts[k - 1]));
     }
 
     const headsign = [...pattern.headsigns.entries()].sort((a, b) => b[1] - a[1])[0][0];
@@ -348,6 +359,7 @@ async function build() {
       s: pattern.stops,
       t: gaps.slice(1),
       n: perHour,
+      x: departures,
     });
   }
 
@@ -381,7 +393,7 @@ async function build() {
   fs.writeFileSync(OUT, json);
   const gz = zlib.gzipSync(json).length;
   console.log(
-    `\nWrote ${path.relative(ROOT, OUT)}: ${routes.length} routes, ${keptStops.id.length} stops, ` +
+    `\nWrote ${path.relative(ROOT, OUT)}: ${keptRoutes.length} routes, ${keptStops.id.length} stops, ` +
       `${outPatterns.length} patterns, ${(json.length / 1e6).toFixed(1)} MB (${(gz / 1e6).toFixed(1)} MB gzipped)`
   );
 }

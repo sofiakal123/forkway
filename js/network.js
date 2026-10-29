@@ -5,6 +5,7 @@
 export const WALK_SPEED = 1.3; // meters per second
 export const WALK_DETOUR = 1.25; // streets are longer than a straight line
 const GRID_DEGREES = 0.003; // about 330 m per grid cell
+const MAX_TIMETABLE_WAIT = 2 * 3600; // a longer wait than this isn't worth suggesting
 const EARTH_RADIUS = 6371000;
 
 export class Network {
@@ -21,6 +22,14 @@ export class Network {
     this.patterns = data.patterns.map((p, index) => {
       const cum = new Float64Array(p.s.length);
       for (let i = 1; i < p.s.length; i++) cum[i] = cum[i - 1] + p.t[i - 1];
+      // Departures from the first stop, seconds after midnight, per day type
+      const departures = {};
+      for (const [type, gaps] of Object.entries(p.x ?? {})) {
+        const list = new Int32Array(gaps.length);
+        let minutes = 0;
+        gaps.forEach((g, k) => (list[k] = (minutes += g) * 60));
+        departures[type] = list;
+      }
       return {
         index,
         route: p.r,
@@ -29,6 +38,7 @@ export class Network {
         stops: Int32Array.from(p.s),
         cum,
         perHour: p.n,
+        departures,
         mode: this.routes[p.r].mode,
       };
     });
@@ -94,6 +104,40 @@ export class Network {
       if (next > 0) return 3600 * ahead - intoHour + 3600 / next / 2;
     }
     return Infinity;
+  }
+
+  // Seconds until the next scheduled vehicle of pattern p reaches stop
+  // position i, for someone there at `time`. Uses the timetable; falls back
+  // to the typical wait when the timetable doesn't say. Infinity if none soon.
+  nextDepartureWait(p, i, time) {
+    const pattern = this.patterns[p];
+    const midnight = new Date(time.getFullYear(), time.getMonth(), time.getDate());
+    const now = (time - midnight) / 1000;
+    const yesterday = new Date(midnight.getTime() - 12 * 3600_000);
+    const tomorrow = new Date(midnight.getTime() + 36 * 3600_000);
+    // Yesterday's after-midnight trips, today's, then tomorrow's early ones
+    const days = [
+      [pattern.departures[dayType(yesterday)], -86400],
+      [pattern.departures[dayType(time)], 0],
+      [pattern.departures[dayType(tomorrow)], 86400],
+    ];
+    if (days.every(([list]) => !list)) return this.waitSeconds(p, i, time);
+    const offset = pattern.cum[i];
+    let best = Infinity;
+    for (const [list, shift] of days) {
+      if (!list) continue;
+      // First trip whose arrival at stop i is at or after now
+      const target = now - shift - offset;
+      let lo = 0;
+      let hi = list.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (list[mid] < target) lo = mid + 1;
+        else hi = mid;
+      }
+      if (lo < list.length) best = Math.min(best, list[lo] + shift + offset - now);
+    }
+    return best <= MAX_TIMETABLE_WAIT ? best : Infinity;
   }
 
   // Seconds of riding pattern p from position i to position j

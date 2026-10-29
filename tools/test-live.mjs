@@ -37,4 +37,4 @@ const alt = st.choices.find((c) => c.exit.name === "167 St");
 tracker.chooseExit(alt); st = show("switched to 167 St exit", now);
 tick(1.5); show("1.5 min later", now);
 tick(1.5); show("1.5 min later", now);
-tracker.gotOff(); tick(1); st = show("got off, walking to Bx35", now);
+tracker.gotOff(now); tick(1); st = show("got off, walking to Bx35", now);
